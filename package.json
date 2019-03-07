@@ -1,0 +1,21 @@
+{
+  "name": "squid-overlord",
+  "version": "1.0.0",
+  "description": "A web service for controlling Squid installations",
+  "main": "Main.js",
+  "dependencies": {
+  },
+  "devDependencies": {
+    "eslint": "^4.14.0"
+  },
+  "homepage": "https://github.com/measurement-factory/squid-overlord#readme",
+  "bugs": {
+    "url": "https://github.com/measurement-factory/squid-overlord/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/measurement-factory/squid-overlord.git"
+  },
+  "author": "The Measurement Factory",
+  "license": "Apache-2.0"
+}
