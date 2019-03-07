@@ -37,6 +37,11 @@ class Configuration {
         return Path.join(this._installationRoot, "var", "run", "squid.pid");
     }
 
+    generalLogFilename()
+    {
+        return Path.join(this._installationRoot, "var", "logs", "cache-1.log");
+    }
+
     squidConfig()
     {
         return Path.join(this._installationRoot, "etc", "squid-overlord.conf");

@@ -28,10 +28,18 @@ async function StopSquid()
         throw new Error("Squid failed to stop");
 }
 
-function ReconfigureSquid()
+async function ReconfigureSquid()
 {
-    return SignalSquid('HUP');
-    // TODO: Wait until reconfiguration is over.
+    // start tail-f before sending a signal or we may miss the marker
+    let loggingPromise = ServerState.Logs("Reconfiguring Squid Cache");
+
+    await SignalSquid('HUP');
+
+    if (!await loggingPromise)
+        throw new Error("Squid has not reacted to a reconfigure signal");
+
+    if (!await ServerState.StartsListening(Config.defaultSquidListeningAddress()))
+        throw new Error("Squid failed to resume listening after reconfiguration");
 }
 
 function SignalSquid(signalName)

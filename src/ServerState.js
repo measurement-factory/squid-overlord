@@ -2,7 +2,9 @@
 
 const Command = require("./Command.js");
 const Gadgets = require("./Gadgets.js");
+const Config = require('./Config.js');
 const fs = require("fs");
+const Tail = require('tail').Tail;
 
 async function AddressInUse(address) {
     // TODO: Check that lsof works at all: -p $$
@@ -54,8 +56,44 @@ async function RemovesPid(pidFilename) {
     return !fs.existsSync(pidFilename);
 }
 
+function Logs(text) {
+    const filename = Config.generalLogFilename();
+    console.log("will tail ", filename, " for: ", text);
+    let tail = new Tail(filename);
+    let linesSeen = 0;
+
+    let tailPromise = new Promise((resolve) => {
+        tail.on("line", function(line) {
+            ++linesSeen;
+            if (line.indexOf(text) >= 0) {
+                console.log("found: ", line);
+                resolve(true);
+                return;
+            }
+            if (linesSeen % 100 === 1)
+                console.log("still waiting...");
+        });
+
+        tail.on("error", function(error) {
+            console.log("tail error: ", error);
+            throw error;
+        });
+    });
+
+    let timeoutPromise = Gadgets.Sleep(Gadgets.Seconds(60))
+        .then(() => {
+            throw new Error("timeout while waiting for '" + text + "' to be logged");
+        });
+
+    return Promise.race([tailPromise, timeoutPromise])
+        .finally(() => {
+            tail.unwatch();
+        });
+}
+
 module.exports = {
     StartsListening: StartsListening,
     StopsListening: StopsListening,
+    Logs: Logs,
     RemovesPid: RemovesPid
 };
