@@ -23,14 +23,24 @@ async function StartSquid()
 
 async function StopSquid()
 {
-    const pidFilename = Config.pidFilename();
-    const shell = "kill -INT `cat " + pidFilename + "`";
-    let command = new Command(shell);
-    await command.run();
-    if (!await ServerState.RemovesPid(pidFilename))
+    await SignalSquid('INT');
+    if (!await ServerState.RemovesPid(Config.pidFilename()))
         throw new Error("Squid failed to stop");
 }
 
+function ReconfigureSquid()
+{
+    return SignalSquid('HUP');
+    // TODO: Wait until reconfiguration is over.
+}
+
+function SignalSquid(signalName)
+{
+    const pidFilename = Config.pidFilename();
+    const shell = "kill -" + signalName + " `cat " + pidFilename + "`";
+    let command = new Command(shell);
+    return command.run();
+}
 
 async function HandleRequest(request, response)
 {
@@ -46,6 +56,11 @@ async function HandleRequest(request, response)
 
     if (request.url === '/stop') {
         await StopSquid();
+        return sendOk(response);
+    }
+
+    if (request.url === '/reconfigure') {
+        await ReconfigureSquid();
         return sendOk(response);
     }
 
