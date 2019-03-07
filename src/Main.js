@@ -32,7 +32,7 @@ async function StopSquid()
 }
 
 
-async function RequestListener(request, response)
+async function HandleRequest(request, response)
 {
     if (request.url === '/') {
         // TODO: Send actions menu.
@@ -40,9 +40,6 @@ async function RequestListener(request, response)
     }
 
     if (request.url === '/start') {
-        // await new Promise(resolve => {
-        //     setTimeout(() => { resolve(); }, 3000);
-        // });
         await StartSquid();
         return sendOk(response);
     }
@@ -54,6 +51,18 @@ async function RequestListener(request, response)
 
     response.writeHead(404, { 'Content-Type': 'text/plain' });
     return response.end("Unsupported request");
+}
+
+async function RequestListener(request, response)
+{
+    try {
+        return await HandleRequest(request, response);
+    } catch (error) {
+        console.log("failure while handling request for ", request.url);
+        console.log("error: ", error);
+        response.writeHead(555, 'External Server Error', { 'Content-Type': 'text/plain' });
+        return response.end(`${error}`); // safer than toString()?
+    }
 }
 
 function sendOk(response)
