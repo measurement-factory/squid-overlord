@@ -10,7 +10,9 @@ class Command {
     constructor(command) {
         this.command_ = command;
         this.timeout_ = CallTimeoutDefault; // gets killed if takes longer
-        this.fallible_ = null; // whether failures are ignored
+        this.throwOnFailure_ = true;
+        this.reportFailure_ = true;
+        this.reportStdout_ = true;
     }
 
     timeout(time) {
@@ -19,9 +21,21 @@ class Command {
         return this;
     }
 
-    mayFail(why) {
-        assert(why);
-        this.fallible_ = why;
+    throwOnFailure(doIt) {
+        assert(doIt !== undefined);
+        this.throwOnFailure_ = doIt;
+        return this;
+    }
+
+    reportFailure(doIt) {
+        assert(doIt !== undefined);
+        this.reportFailure_ = doIt;
+        return this;
+    }
+
+    reportStdout(doIt) {
+        assert(doIt !== undefined);
+        this.reportStdout_ = doIt;
         return this;
     }
 
@@ -40,23 +54,27 @@ class Command {
             timeout: Gadgets.ToMilliseconds(this.timeout_)
         })
         .then(({ stdout, stderr }) => {
-            if (stdout.length || stderr.length) {
+            if (stdout.length && this.reportStdout_) {
                 console.log(this.toString(), " stdout:");
                 console.log(stdout);
+            }
+            if (stderr.length) {
                 console.log(this.toString(), " stderr:");
                 console.log(stderr);
             }
             return true;
         })
         .catch(error => {
-            console.log("command failed: ", this.toString());
-            console.log("error: ", error);
-            if (this.fallible_) {
-                console.log("ignoring; excuse: ", this.fallible_);
-                return false;
-            } else {
+            if (this.reportFailure_) {
+                console.log("command failed: ", this.toString());
+                console.log("error: ", error);
+                if (!this.throwOnFailure_)
+                    console.log("ignoring the above failure");
+            }
+            if (this.throwOnFailure_) {
                 throw error;
             }
+            return false;
         });
     }
 }

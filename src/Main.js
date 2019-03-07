@@ -2,7 +2,7 @@ const Http = require('http');
 //const Path = require('path');
 const Config = require('./Config.js');
 const Command = require('./Command.js');
-const Gadgets = require('./Gadgets.js');
+const ServerState = require('./ServerState.js');
 
 process.on("unhandledRejection", function (reason /*, promise */) {
     console.log("Quitting on a rejected promise:", reason);
@@ -17,17 +17,18 @@ async function StartSquid()
     const shell = Config.exe() + options + "> var/logs/squid.out 2>&1";
     let command = new Command(shell);
     await command.run();
-    if (!await Gadgets.ServerStartsListening(Config.defaultSquidListeningAddress()))
+    if (!await ServerState.StartsListening(Config.defaultSquidListeningAddress()))
         throw new Error("Squid failed to start");
-    // TODO: *wait* for Squid to start listening on the default port.
 }
 
-function StopSquid()
+async function StopSquid()
 {
-    const shell = "kill -INT `cat var/run/squid.pid`";
+    const pidFilename = Config.pidFilename();
+    const shell = "kill -INT `cat " + pidFilename + "`";
     let command = new Command(shell);
-    return command.run();
-    // TODO: and wait for Squid to remove its PID file.
+    await command.run();
+    if (!await ServerState.RemovesPid(pidFilename))
+        throw new Error("Squid failed to stop");
 }
 
 
