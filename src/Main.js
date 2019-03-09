@@ -1,80 +1,12 @@
 const Http = require('http');
 //const Path = require('path');
 const Config = require('./Config.js');
-const Command = require('./Command.js');
-const ServerState = require('./ServerState.js');
+const HandleRequest = require('./HandleRequest.js');
 
 process.on("unhandledRejection", function (reason /*, promise */) {
     console.log("Quitting on a rejected promise:", reason);
     throw reason;
 });
-
-async function StartSquid()
-{
-    const options =
-        " -f " + Config.squidConfig() + // our configuration
-        " -C "; // prefer "raw" errors
-    const shell = Config.exe() + options + "> var/logs/squid.out 2>&1";
-    let command = new Command(shell);
-    await command.run();
-    if (!await ServerState.StartsListening(Config.defaultSquidListeningAddress()))
-        throw new Error("Squid failed to start");
-}
-
-async function StopSquid()
-{
-    await SignalSquid('INT');
-    if (!await ServerState.RemovesPid(Config.pidFilename()))
-        throw new Error("Squid failed to stop");
-}
-
-async function ReconfigureSquid()
-{
-    // start tail-f before sending a signal or we may miss the marker
-    let loggingPromise = ServerState.Logs("Reconfiguring Squid Cache");
-
-    await SignalSquid('HUP');
-
-    if (!await loggingPromise)
-        throw new Error("Squid has not reacted to a reconfigure signal");
-
-    if (!await ServerState.StartsListening(Config.defaultSquidListeningAddress()))
-        throw new Error("Squid failed to resume listening after reconfiguration");
-}
-
-function SignalSquid(signalName)
-{
-    const pidFilename = Config.pidFilename();
-    const shell = "kill -" + signalName + " `cat " + pidFilename + "`";
-    let command = new Command(shell);
-    return command.run();
-}
-
-async function HandleRequest(request, response)
-{
-    if (request.url === '/') {
-        // TODO: Send actions menu.
-        return sendOk(response);
-    }
-
-    if (request.url === '/start') {
-        await StartSquid();
-        return sendOk(response);
-    }
-
-    if (request.url === '/stop') {
-        await StopSquid();
-        return sendOk(response);
-    }
-
-    if (request.url === '/reconfigure') {
-        await ReconfigureSquid();
-        return sendOk(response);
-    }
-
-    response.writeHead(404, { 'Content-Type': 'text/plain' });
-    return response.end("Unsupported request");
-}
 
 async function RequestListener(request, response)
 {
@@ -86,12 +18,6 @@ async function RequestListener(request, response)
         response.writeHead(555, 'External Server Error', { 'Content-Type': 'text/plain' });
         return response.end(`${error}`); // safer than toString()?
     }
-}
-
-function sendOk(response)
-{
-    response.writeHead(200, { 'Content-Type': 'text/plain' });
-    return response.end('OK.');
 }
 
 process.chdir(Config.installationRoot());

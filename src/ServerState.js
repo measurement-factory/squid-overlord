@@ -26,7 +26,12 @@ async function AddressInUse(address) {
     }
 }
 
-async function StartsListening(address) {
+function IsListening() {
+    return AddressInUse(Config.defaultSquidListeningAddress());
+}
+
+async function StartsListening() {
+    const address = Config.defaultSquidListeningAddress();
     if (await AddressInUse(address))
         return true;
     await Gadgets.Sleep(Gadgets.Seconds(5));
@@ -36,7 +41,8 @@ async function StartsListening(address) {
     return await AddressInUse(address);
 }
 
-async function StopsListening(address) {
+async function StopsListening() {
+    const address = Config.defaultSquidListeningAddress();
     if (!await AddressInUse(address))
         return true;
     await Gadgets.Sleep(Gadgets.Seconds(5));
@@ -92,6 +98,7 @@ function Logs(text) {
 }
 
 module.exports = {
+    IsListening: IsListening,
     StartsListening: StartsListening,
     StopsListening: StopsListening,
     Logs: Logs,
