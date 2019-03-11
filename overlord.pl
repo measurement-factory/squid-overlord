@@ -141,11 +141,15 @@ sub squidIsListening() {
 
 sub squidPid
 {
-    my $pid = `cat $SquidPidFilename` or die("cannot determine Squid PID: $@\n");
-    chomp($pid);
-    return $pid;
-}
+    my $in = IO::File->new("< $SquidPidFilename")
+        or die("cannot open $SquidPidFilename: $!\n");
+    my $pid = $in->getline() or die("cannot read $SquidConfigFilename: $!\n");
+    $in->close();
 
+    chomp($pid);
+    die("malformed PID value: $pid") unless $pid =~ /^\d+$/;
+    return int($pid);
+}
 
 # "parse" the client request and pass the details to the command-processing sub
 sub handleClient
@@ -174,7 +178,7 @@ sub receiveBody
 
     my $body;
     my $result = $client->read($body, $bodyLength);
-    die("cannot receive request body: $@") unless defined $result;
+    die("cannot receive request body: $!") unless defined $result;
     die("received truncated request body: ",
         length $body, " vs. the expected $bodyLength bytes\n")
         if length $body != $bodyLength;
@@ -201,7 +205,7 @@ sub sendResponse
     $response .= $body;
 
     my $result = $client->send($response)
-        or die("failed to write a $status response: $@\n");
+        or die("failed to write a $status response: $!\n");
     die("wrote truncated $status response") if $result != length $response;
 }
 
