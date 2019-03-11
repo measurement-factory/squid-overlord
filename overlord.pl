@@ -200,6 +200,7 @@ sub sendResponse
 
     my $response = '';
     $response .= "HTTP/1.1 $status\r\n";
+    $response .= "Connection: close\r\n";
     $response .= "Content-Length: " . (length $body) . "\r\n";
     $response .= "\r\n";
     $response .= $body;
