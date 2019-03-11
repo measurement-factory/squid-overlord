@@ -1,6 +1,6 @@
 const Http = require('http');
 //const Path = require('path');
-const Config = require('./Config.js');
+const SquidConfiguration = require('./SquidConfiguration.js');
 const HandleRequest = require('./HandleRequest.js');
 
 process.on("unhandledRejection", function (reason /*, promise */) {
@@ -20,8 +20,9 @@ async function RequestListener(request, response)
     }
 }
 
-process.chdir(Config.installationRoot());
+const root = process.argv.length > 2 ? process.argv[2] : "/usr/local/squid";
+process.chdir(root);
+SquidConfiguration.InstallationRoot(root);
 
 const server = Http.createServer(RequestListener);
-
 server.listen(13128);

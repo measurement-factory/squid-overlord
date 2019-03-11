@@ -1,45 +1,26 @@
 //const assert = require("assert");
 //const Http = require('http');
 //const Path = require('path');
-const Config = require('./Config.js');
 const Command = require('./Command.js');
 const ServerState = require('./ServerState.js');
-//const SquidConfiguration = require('./Squid/Configuration.js');
+const SquidConfiguration = require('./SquidConfiguration.js');
 
-
-// promises a parsed JSON body for the given message
-function Body(message)
-{
-    // TODO: this._request.setEncoding('utf8')?
-    return new Promise((resolve) => {
-        let body = [];
-        message.on('data', (chunk) => {
-            body.push(chunk);
-        });
-        message.on('end', () => {
-            resolve(Buffer.concat(body).toString());
-        });
-        message.on('error', (error) => {
-            throw error;
-        });
-    });
-}
-
+// processes a single client request
 class RequestHandler
 {
     constructor(request, response)
     {
         this._request = request;
         this._response = response;
-        //this._squidConfiguration = new Squid::Configuration;
+        this._squidConfiguration = new SquidConfiguration();
     }
 
     async _startSquid()
     {
         const options =
-            " -f " + Config.squidConfig() + // our configuration
+            " -f " + this._squidConfiguration.configurationFilename() + // our squid.conf
             " -C "; // prefer "raw" errors
-        const shell = Config.exe() + options + "> var/logs/squid.out 2>&1";
+        const shell = this._squidConfiguration.exeFilename() + options + "> var/logs/squid.out 2>&1";
         let command = new Command(shell);
         await command.run();
         if (!await ServerState.StartsListening())
@@ -49,7 +30,7 @@ class RequestHandler
     async _stopSquid()
     {
         await this._signalSquid('INT');
-        if (!await ServerState.RemovesPid(Config.pidFilename()))
+        if (!await ServerState.RemovesPid(this._squidConfiguration.pidFilename()))
             throw new Error("Squid failed to stop");
     }
 
@@ -79,7 +60,7 @@ class RequestHandler
 
     _signalSquid(signalName)
     {
-        const pidFilename = Config.pidFilename();
+        const pidFilename = this._squidConfiguration.pidFilename();
         const shell = "kill -" + signalName + " `cat " + pidFilename + "`";
         let command = new Command(shell);
         return command.run();
@@ -124,6 +105,24 @@ class RequestHandler
         this._response.writeHead(404, { 'Content-Type': 'text/plain' });
         return this._response.end("Unsupported request");
     }
+}
+
+// promises a parsed JSON body for the given message
+function Body(message)
+{
+    // TODO: this._request.setEncoding('utf8')?
+    return new Promise((resolve) => {
+        let body = [];
+        message.on('data', (chunk) => {
+            body.push(chunk);
+        });
+        message.on('end', () => {
+            resolve(Buffer.concat(body).toString());
+        });
+        message.on('error', (error) => {
+            throw error;
+        });
+    });
 }
 
 function HandleRequest(request, response)
