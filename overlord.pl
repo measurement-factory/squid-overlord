@@ -26,9 +26,12 @@ GetOptions(
 ) or die("usage: $0 [--listen <port>] [--prefix <Squid installation prefix>]\n");
 
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
-my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf"; # maintained by us
 my $SquidExeFilename = "$SquidPrefix/sbin/squid";
 my $SquidListeningPort = 3128;
+# maintained by us
+my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf";
+my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
+my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
 # (re)start Squid form scratch with the given configuration
 sub resetSquid
@@ -37,6 +40,7 @@ sub resetSquid
     # warn("Resetting to:\n$config\n");
 
     &stopSquid() if &squidIsRunning();
+    &resetLogs();
     &writeSquidConfiguration($config);
     &startSquid();
 }
@@ -66,6 +70,20 @@ sub killSquid
     die("cannot kill Squid: $EXTENDED_OS_ERROR\n") if kill('SIGZERO', $pid) == 1;
 }
 
+sub resetLogs
+{
+    # Backup the old logs directory before removing it.
+    # Only one level of backup (.bak) is maintained.
+    if (-e $SquidLogsDirname) {
+        my $backup = "${SquidLogsDirname}.bak";
+        system("rm -r $backup") if -e $backup; # and ignore errors
+        system("mv -T $SquidLogsDirname $backup") == 0
+            or die("cannot rename $SquidLogsDirname to $backup\n");
+    }
+    mkdir($SquidLogsDirname)
+        or die("cannot create $SquidLogsDirname directory: $!");
+}
+
 sub writeSquidConfiguration
 {
     my $config = shift;
@@ -81,7 +99,7 @@ sub startSquid
     my $cmd = "$SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
-    $cmd .= " > var/logs/squid.out 2>&1";
+    $cmd .= " > $SquidOutFilename 2>&1";
     warn("running: $cmd\n");
     system($cmd) == 0 or die("cannot start Squid: $!\n");
 
