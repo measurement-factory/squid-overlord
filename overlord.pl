@@ -178,6 +178,10 @@ sub handleClient
         $header .= $_;
     }
 
+    if ($header =~ m@^Pop-Version:\s*(\S*)@im) {
+        die("unsupported Proxy Overlord Protocol version $1\n");
+    }
+
     if ($header =~ m@^POST\s+/reset\s@s &&
         $header =~ m@^Content-Length:\s*(\d+)@im) {
         &resetSquid(&receiveBody($client, $1));
