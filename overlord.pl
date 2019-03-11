@@ -25,7 +25,7 @@ GetOptions(
     "prefix=s" => \$SquidPrefix,
 ) or die("usage: $0 [--listen <port>] [--prefix <Squid installation prefix>]\n");
 
-chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $?\n");
+chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
 
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf"; # maintained by us
