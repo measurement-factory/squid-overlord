@@ -25,8 +25,6 @@ GetOptions(
     "prefix=s" => \$SquidPrefix,
 ) or die("usage: $0 [--listen <port>] [--prefix <Squid installation prefix>]\n");
 
-chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
-
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf"; # maintained by us
 my $SquidExeFilename = "$SquidPrefix/sbin/squid";
@@ -210,14 +208,16 @@ sub sendResponse
     die("wrote truncated $status response") if $result != length $response;
 }
 
+chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
+
 my $server = IO::Socket::INET->new(
     LocalPort => $MyListeningPort,
     Type      => SOCK_STREAM,
     Reuse     => 1,
     Listen    => 10, # SOMAXCONN
 ) or die("Cannot listen on on TCP port $MyListeningPort: $@\n");
-
 warn("Overlord listens on port $MyListeningPort\n");
+
 if (&squidIsRunning()) {
     warn("Squid listens on port $SquidListeningPort: ", (&squidIsListening() ? "yes" : "no"), "\n");
 }
