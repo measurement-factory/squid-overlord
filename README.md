@@ -6,9 +6,12 @@ testing by isolating generic HTTP proxy test case logic from Squid
 manipulation specifics. This overlord is a Perl script and a web service
 with RESTish API.
 
-## Typical invocation
+## Simple one-time invocation
 
-    sudo -u nobody ./overlord.pl
+    url=https://github.com/measurement-factory/squid-overlord/raw/stable/overlord.pl
+    curl -L $url | sudo -u nobody perl -
+
+Use the right username if your Squid effective user is different from `nobody`.
 
 ## Supported commands
 
