@@ -17,20 +17,19 @@ use strict;
 use warnings;
 use English;
 
-my $ListeningPort = 13128;
-my $Prefix = "/usr/local/squid";
-my $Help = 0;
+my $MyListeningPort = 13128;
+my $SquidPrefix = "/usr/local/squid";
 
 GetOptions(
-    "port=i" => \$ListeningPort,
-    "prefix=s" => \$Prefix,
+    "port=i" => \$MyListeningPort,
+    "prefix=s" => \$SquidPrefix,
 ) or die("usage: $0 [--listen <port>] [--prefix <Squid installation prefix>]\n");
 
-chdir($Prefix) or die("Cannot set working directory to $Prefix: $?\n");
+chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $?\n");
 
-my $SquidPidFilename = "$Prefix/var/run/squid.pid";
-my $SquidConfigFilename = "$Prefix/etc/squid-overlord.conf"; # maintained by us
-my $SquidExeFilename = "$Prefix/sbin/squid";
+my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
+my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf"; # maintained by us
+my $SquidExeFilename = "$SquidPrefix/sbin/squid";
 my $SquidListeningPort = 3128;
 
 # (re)start Squid form scratch with the given configuration
@@ -207,13 +206,16 @@ sub sendResponse
 }
 
 my $server = IO::Socket::INET->new(
-    LocalPort => $ListeningPort,
+    LocalPort => $MyListeningPort,
     Type      => SOCK_STREAM,
     Reuse     => 1,
     Listen    => 10, # SOMAXCONN
-) or die("Cannot listen on on TCP port $ListeningPort: $@\n");
+) or die("Cannot listen on on TCP port $MyListeningPort: $@\n");
 
-warn("$0 listens on TCP port $ListeningPort\n");
+warn("Overlord listens on port $MyListeningPort\n");
+if (&squidIsRunning()) {
+    warn("Squid listens on port $SquidListeningPort: ", (&squidIsListening() ? "yes" : "no"), "\n");
+}
 
 while (my $client = $server->accept()) {
     eval { &handleClient($client); };
