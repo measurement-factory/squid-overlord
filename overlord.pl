@@ -61,15 +61,6 @@ sub shutdownSquid
     &waitFor("deleted $SquidPidFilename", sub { ! &squidIsRunning() });
 }
 
-sub killSquid
-{
-    my $pid = &squidPid();
-    kill('SIGZERO', $pid) == 1 or die("cannot signal Squid ($pid): $EXTENDED_OS_ERROR\n");
-    warn("killing Squid ($pid) process...\n");
-    kill('SIGKILL', $pid) == 1 or return;
-    die("cannot kill Squid: $EXTENDED_OS_ERROR\n") if kill('SIGZERO', $pid) == 1;
-}
-
 sub resetLogs
 {
     # Backup the old logs directory before removing it.
