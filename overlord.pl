@@ -9,7 +9,6 @@
 
 
 # These Core modules should be available in nearly all Perl installations.
-use Carp;
 use IO::Socket;
 use IO::File;
 use Getopt::Long;
@@ -96,7 +95,7 @@ sub startSquid
 
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", \&squidIsListening);
-    warn("Squid is running\n");
+    warn("Squid is listening\n");
 }
 
 sub waitFor
