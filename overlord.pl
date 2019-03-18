@@ -11,6 +11,7 @@
 # These Core modules should be available in nearly all Perl installations.
 use IO::Socket;
 use IO::File;
+use POSIX qw(:sys_wait_h);
 use Getopt::Long;
 use strict;
 use warnings;
@@ -220,6 +221,40 @@ sub sendResponse
     die("wrote truncated $status response") if $result != length $response;
 }
 
+sub handleClientOrWriteError
+{
+    my $client = shift;
+
+    eval { &handleClient($client); };
+    my $error = $@;
+    eval { &writeError($client, $error) } if $error; # but swallow cascading errors
+
+    close($client) or warn("cannot close client connection: $@\n");
+
+    die($error) if $error;
+    return 0;
+}
+
+# from "man perlipc"
+sub reaper {
+    local $!; # do not let waitpid() overwrite current error
+    while ((my $pid = waitpid(-1, WNOHANG)) > 0 && WIFEXITED($CHILD_ERROR)) {
+        my $how = $CHILD_ERROR ? " with error code $CHILD_ERROR" : "";
+        warn("child $pid exited$how\n");
+    }
+    $SIG{'CHLD'} = \&reaper;
+}
+
+sub spawn
+{
+    my $code = shift;
+    my $pid = fork();
+    die("cannot fork: $!") unless defined($pid);
+    return $pid if $pid; # parent
+    warn("child $$ started\n");
+    exit($code->());
+}
+
 chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
 
 my $server = IO::Socket::INET->new(
@@ -234,11 +269,24 @@ if (&squidIsRunning()) {
     warn("Squid listens on port $SquidListeningPort: ", (&squidIsListening() ? "yes" : "no"), "\n");
 }
 
+$SIG{'CHLD'} = \&reaper;
+
 while (my $client = $server->accept()) {
-    eval { &handleClient($client); };
-    my $error = $@;
-    eval { &writeError($client, $error) } if $error; # but swallow cascading errors
-    close($client) or warn("cannot close client connection: $@\n");
+    my $child = &spawn( sub { &handleClientOrWriteError($client); } );
+
+    my $timeout = 60; # seconds
+    # imprecise poor man's alarm() that is compatible with sleep()
+    for (my $seconds = 0; $seconds < $timeout; ++$seconds) {
+        last unless kill(0, $child);
+        sleep(1);
+    }
+
+    if (kill(0, $child)) {
+        warn("$$ killing kid $child that did not finish in $timeout seconds\n");
+        kill('SIGTERM', $child) or warn("kill failure: $!");
+    }
+
+    close($client); # may already be closed
 }
 
 exit(0);
