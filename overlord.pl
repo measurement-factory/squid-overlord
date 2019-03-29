@@ -271,7 +271,12 @@ if (&squidIsRunning()) {
 
 $SIG{'CHLD'} = \&reaper;
 
-while (my $client = $server->accept()) {
+while (1) {
+    my $client = $server->accept() or do {
+        next if $OS_ERROR{EINTR};
+        die("accept failure: $!, stopped");
+    };
+
     my $child = &spawn( sub { &handleClientOrWriteError($client); } );
 
     my $timeout = 60; # seconds
@@ -289,4 +294,4 @@ while (my $client = $server->accept()) {
     close($client); # may already be closed
 }
 
-exit(0);
+die("unreachable code reached, stopped");
