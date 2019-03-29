@@ -173,7 +173,7 @@ sub handleClient
         die("unsupported Proxy Overlord Protocol version $1\n");
     }
 
-    if ($header =~ m@^POST\s+/reset\s@s &&
+    if ($header =~ m@^POST\s+\S*/reset\s@s &&
         $header =~ m@^Content-Length:\s*(\d+)@im) {
         &resetSquid(&receiveBody($client, $1));
         &sendResponse($client, "200 OK", "");
