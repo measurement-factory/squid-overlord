@@ -180,6 +180,12 @@ sub handleClient
         return;
     }
 
+    if ($header =~ m@^GET\s+\S*/stop\s@s) {
+        &stopSquid();
+        &sendResponse($client, "200 OK", "");
+        return;
+    }
+
     die("unsupported Proxy Overlord Protocol request:\n$header\nstopped");
 }
 
