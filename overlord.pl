@@ -31,18 +31,25 @@ my $SquidListeningPort = 3128;
 # maintained by us
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf";
 my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
+my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
 # (re)start Squid form scratch with the given configuration
 sub resetSquid
 {
-    my $config = shift;
+    my ($options) = @_;
+    my $config = $options->{config_};
     # warn("Resetting to:\n$config\n");
 
     &stopSquid() if &squidIsRunning();
-    &resetLogs();
+
+    # XXX: This reset order pollutes old logs with squid-z activity.
+    # TODO: Find a better way while avoiding new logs pollution.
     &writeSquidConfiguration($config);
-    &startSquid();
+    &resetCaches if $config =~ /cache_dir/; # needs writeSquidConfiguration()
+    &resetLogs();
+
+    &startSquidInBackground($options);
 }
 
 sub stopSquid
@@ -63,16 +70,13 @@ sub shutdownSquid
 
 sub resetLogs
 {
-    # Backup the old logs directory before removing it.
-    # Only one level of backup (.bak) is maintained.
-    if (-e $SquidLogsDirname) {
-        my $backup = "${SquidLogsDirname}.bak";
-        system("rm -r $backup") if -e $backup; # and ignore errors
-        system("mv -T $SquidLogsDirname $backup") == 0
-            or die("cannot rename $SquidLogsDirname to $backup\n");
-    }
-    mkdir($SquidLogsDirname)
-        or die("cannot create $SquidLogsDirname directory: $!");
+    &resetDir($SquidLogsDirname);
+}
+
+sub resetCaches
+{
+    &resetDir($SquidCachesDirname);
+    &runSquidInForeground('-z');
 }
 
 sub writeSquidConfiguration
@@ -85,18 +89,50 @@ sub writeSquidConfiguration
     warn("created ", length($config), "-byte $SquidConfigFilename\n");
 }
 
-sub startSquid
+sub startSquidInBackground
 {
+    my ($options) = @_;
+
+    &startSquid_();
+    &waitFor("running Squid", \&squidIsRunning);
+    &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
+    warn("Squid is listening\n");
+}
+
+sub runSquidInForeground
+{
+    my @extraOptions = @_;
+    &startSquid_('--foreground', @extraOptions);
+}
+
+# common part for startSquidInBackground() and runSquidInForeground()
+sub startSquid_
+{
+    my @extraOptions = @_;
+
     my $cmd = "$SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
+    $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
     $cmd .= " > $SquidOutFilename 2>&1";
     warn("running: $cmd\n");
     system($cmd) == 0 or die("cannot start Squid: $!\n");
+}
 
-    &waitFor("running Squid", \&squidIsRunning);
-    &waitFor("listening Squid", \&squidIsListening);
-    warn("Squid is listening\n");
+# (backs up and re)creates the given directory
+sub resetDir
+{
+    my ($dirname) = @_;
+
+    # Only one level of backup (.bak) is maintained.
+    if (-e $dirname) {
+        my $backup = "${dirname}.bak";
+        system("rm -r $backup") if -e $backup; # and ignore errors
+        system("mv -T $dirname $backup") == 0
+            or die("cannot rename $dirname to $backup\n");
+    }
+    mkdir($dirname)
+        or die("cannot create $dirname directory: $!");
 }
 
 sub waitFor
@@ -129,13 +165,32 @@ sub squidIsRunning() {
     return 1;
 }
 
-sub squidIsListening() {
+sub squidIsListeningOnAllPorts() {
+    my ($options) = @_;
+
+    # We do not parse http_port lines because they may have ${process_number}
+    # and/or may be affected by macros.
+    my $pname = 'listening-ports';
+    die("missing $pname in ", join(",", keys %{$options})) unless defined $options->{$pname};
+    my (@ports) = split(/\s*,\s*/, $options->{$pname});
+    die("cannot determine Squid listening ports") unless @ports;
+
+    foreach my $port (@ports) {
+        return 0 unless &squidIsListeningOn($port);
+    }
+    return 1;
+}
+
+sub squidIsListeningOn() {
+    my ($port) = @_;
+    die() unless defined $port;
+
     # TODO: Check that lsof works at all: -p $$
 
     # We do not specify the IP address part because
     # lsof -i@127.0.0.1 fails when Squid is listening on [::].
     # Should we configure Squid to listen on a special-to-us ipv4-only port?
-    my $lsof = "lsof -Fn -w -i:$SquidListeningPort";
+    my $lsof = "lsof -Fn -w -i:$port";
     if (system("$lsof > /dev/null 2>&1") == 0) {
         #warn("somebody is listening on port $SquidListeningPort\n");
         return 1;
@@ -175,7 +230,13 @@ sub handleClient
 
     if ($header =~ m@^POST\s+\S*/reset\s@s &&
         $header =~ m@^Content-Length:\s*(\d+)@im) {
-        &resetSquid(&receiveBody($client, $1));
+        my $length = $1;
+        my %options = ($header =~ m@^Overlord-(\S+):\s*([^\r\n]*)@img);
+        # convert keys to lowercase (so that we know what case they are in)
+        %options = map { lc($_) => $options{$_} } keys %options;
+
+        $options{config_} = &receiveBody($client, $length);
+        &resetSquid(\%options);
         &sendResponse($client, "200 OK", "");
         return;
     }
@@ -272,7 +333,9 @@ my $server = IO::Socket::INET->new(
 warn("Overlord listens on port $MyListeningPort\n");
 
 if (&squidIsRunning()) {
-    warn("Squid listens on port $SquidListeningPort: ", (&squidIsListening() ? "yes" : "no"), "\n");
+    warn("Squid listens on port $SquidListeningPort: ",
+        (&squidIsListeningOn($SquidListeningPort) ? "yes" : "no"),
+        "\n");
 }
 
 $SIG{'CHLD'} = \&reaper;
