@@ -1,8 +1,8 @@
 #!/usr/bin/perl -w
 
-# Implements the server side of the Proxy Overlord Protocol:
-# HTTP/1 POST requests for "/reset" URLs are translated into
-# a Squid (re)start with the configuration from the POST body.
+# Implements the server side of the Proxy Overlord Protocol (POP):
+# HTTP/1 requests for "/reset", "/check", and other POP URLs
+# are translated into a Squid instance management operations.
 #
 # This Overlord only supports basic HTTP/1 syntax and message
 # composition rules to avoid being dependent on non-Core modules.
@@ -16,6 +16,9 @@ use Getopt::Long;
 use strict;
 use warnings;
 use English;
+# JSON module is in Perl Core since Perl v5.14.
+use JSON::PP;
+
 
 my $MyListeningPort = 13128;
 my $SquidPrefix = "/usr/local/squid";
@@ -50,6 +53,21 @@ sub resetSquid
     &resetLogs();
 
     &startSquidInBackground($options);
+}
+
+sub checkSquid
+{
+    my $report = {};
+
+    $report->{problems} = `egrep -m10 '^[0-9/: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
+    $report->{problems} = '' unless $report->{problems} =~ /\S/;
+
+    my $xactLogged = `cat $SquidLogsDirname/access-*.log | wc -l`;
+    $xactLogged =~ s/^\s+|\s+$//sg; # remove leading and trailing whitespace
+    $xactLogged = 0 unless $xactLogged =~ /\S/;
+    $report->{transactionCount} = $xactLogged =~ /^\d+$/s ? int($xactLogged) : $xactLogged;
+
+    return $report;
 }
 
 sub stopSquid
@@ -237,13 +255,18 @@ sub handleClient
 
         $options{config_} = &receiveBody($client, $length);
         &resetSquid(\%options);
-        &sendResponse($client, "200 OK", "");
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/check\s@s) {
+        &sendOkResponse($client);
         return;
     }
 
     if ($header =~ m@^GET\s+\S*/stop\s@s) {
         &stopSquid();
-        &sendResponse($client, "200 OK", "");
+        &sendOkResponse($client);
         return;
     }
 
@@ -268,6 +291,13 @@ sub writeError
     my ($client, $error) = @_;
     warn("Error: $error\n");
     return &sendResponse($client, "555 External Server Error", $error);
+}
+
+sub sendOkResponse
+{
+    my ($client) = @_;
+    my $report = &checkSquid();
+    return &sendResponse($client, "200 OK", encode_json($report));
 }
 
 sub sendResponse
