@@ -59,7 +59,7 @@ sub checkSquid
 {
     my $report = {};
 
-    $report->{problems} = `egrep -m10 '^[0-9/: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
+    $report->{problems} = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
     $report->{problems} = '' unless $report->{problems} =~ /\S/;
 
     my $xactLogged = `cat $SquidLogsDirname/access-*.log | wc -l`;
