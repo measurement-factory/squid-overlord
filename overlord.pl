@@ -134,7 +134,19 @@ sub startSquid_
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
     $cmd .= " > $SquidOutFilename 2>&1";
     warn("running: $cmd\n");
-    system($cmd) == 0 or die("cannot start Squid: $!\n");
+    system($cmd) == 0 or die("cannot start Squid: $!\n".
+        &optionalContents($SquidOutFilename, 1));
+}
+
+sub optionalContents
+{
+    my ($fname, $decorate) = @_;
+    my $in = IO::File->new($fname, "r") or return '';
+    my $buf;
+    $in->read($buf, 10*1024) or return '';
+    return '' unless defined $buf;
+    return $buf unless $decorate;
+    return "$fname contains:\n$buf\n";
 }
 
 # (backs up and re)creates the given directory
@@ -223,6 +235,7 @@ sub squidPid
 {
     my $in = IO::File->new("< $SquidPidFilename")
         or die("cannot open $SquidPidFilename: $!\n");
+    # XXX: For empty files, "cannot read" below is misleading.
     my $pid = $in->getline() or die("cannot read $SquidConfigFilename: $!\n");
     $in->close();
 
