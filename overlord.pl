@@ -46,11 +46,11 @@ sub resetSquid
 
     &stopSquid() if &squidIsRunning();
 
-    # XXX: This reset order pollutes old logs with squid-z activity.
-    # TODO: Find a better way while avoiding new logs pollution.
     &writeSquidConfiguration($config);
-    &resetCaches if $config =~ /cache_dir/; # needs writeSquidConfiguration()
+    # Ensure log directory existence
+    # and avoid polluting old logs with the upcoming squid-z activity.
     &resetLogs();
+    &resetCaches() if $config =~ /cache_dir/; # needs writeSquidConfiguration()
 
     &startSquidInBackground($options);
 }
@@ -95,6 +95,8 @@ sub resetCaches
 {
     &resetDir($SquidCachesDirname);
     &runSquidInForeground('-z');
+    # Give tests new logs, without this past squid-z activity.
+    &resetLogs();
 }
 
 sub writeSquidConfiguration
@@ -149,18 +151,25 @@ sub optionalContents
     return "$fname contains:\n$buf\n";
 }
 
+# backs up the given file (including directory) if it exists
+sub backupFile
+{
+    my ($current, $backup) = @_;
+    if (-e $current) {
+        system("rm -r $backup") if -e $backup; # and ignore errors
+        system("mv -T $current $backup") == 0
+            or die("cannot rename $current to $backup\n");
+    }
+}
+
 # (backs up and re)creates the given directory
 sub resetDir
 {
     my ($dirname) = @_;
 
-    # Only one level of backup (.bak) is maintained.
-    if (-e $dirname) {
-        my $backup = "${dirname}.bak";
-        system("rm -r $backup") if -e $backup; # and ignore errors
-        system("mv -T $dirname $backup") == 0
-            or die("cannot rename $dirname to $backup\n");
-    }
+    # Two backup levels are maintained, one for old logs, and one for -z logs.
+    &backupFile("$dirname.1", "$dirname.2");
+    &backupFile("$dirname", "$dirname.1");
     mkdir($dirname)
         or die("cannot create $dirname directory: $!");
 }
