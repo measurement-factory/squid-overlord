@@ -253,6 +253,15 @@ sub squidPid
     return int($pid);
 }
 
+sub parseOptions
+{
+    my $header = shift;
+    my %options = ($header =~ m@^Overlord-(\S+):\s*([^\r\n]*)@img);
+    # convert keys to lowercase (so that we know what case they are in)
+    %options = map { lc($_) => $options{$_} } keys %options;
+    return %options;
+}
+
 # "parse" the client request and pass the details to the command-processing sub
 sub handleClient
 {
@@ -271,10 +280,7 @@ sub handleClient
     if ($header =~ m@^POST\s+\S*/reset\s@s &&
         $header =~ m@^Content-Length:\s*(\d+)@im) {
         my $length = $1;
-        my %options = ($header =~ m@^Overlord-(\S+):\s*([^\r\n]*)@img);
-        # convert keys to lowercase (so that we know what case they are in)
-        %options = map { lc($_) => $options{$_} } keys %options;
-
+        my %options = &parseOptions($header);
         $options{config_} = &receiveBody($client, $length);
         &resetSquid(\%options);
         &sendOkResponse($client);
@@ -288,6 +294,14 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/stop\s@s) {
         &stopSquid();
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/restart\s@s) {
+        my %options = &parseOptions($header);
+        &stopSquid();
+        &startSquidInBackground(\%options);
         &sendOkResponse($client);
         return;
     }
