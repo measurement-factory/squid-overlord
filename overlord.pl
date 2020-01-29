@@ -130,7 +130,10 @@ sub startSquid_
 {
     my @extraOptions = @_;
 
-    my $cmd = "$SquidExeFilename";
+    my $cmd = "";
+    $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
+    $cmd .= "ulimit -n 10240; ";
+    $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
