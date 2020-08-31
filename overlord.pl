@@ -234,10 +234,10 @@ sub squidIsListeningOn() {
     # Should we configure Squid to listen on a special-to-us ipv4-only port?
     my $lsof = "lsof -Fn -w -i:$port";
     if (system("$lsof > /dev/null 2>&1") == 0) {
-        #warn("somebody is listening on port $SquidListeningPort\n");
+        #warn("somebody is listening on port $port\n");
         return 1;
     } else {
-        #warn("nobody listens on port $SquidListeningPort\n");
+        #warn("nobody listens on port $port\n");
         system($lsof); # will show usage error/problem if any
         return 0;
     }
