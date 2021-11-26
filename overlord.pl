@@ -272,10 +272,15 @@ sub handleClient
     my $client = shift;
 
     my $header = '';
+    my $sawCrLf = 0;
     while (<$client>) {
-        last if /^\s*$/;
+        $sawCrLf = 1 if /^\s*$/;
+        last if $sawCrLf;
         $header .= $_;
     }
+
+    die("client disconnected before sending the request\n") unless length $header;
+    die("client disconnected before completing the request header:\$header\n") unless $sawCrLf;
 
     if ($header =~ m@^Pop-Version:\s*(\S*)@im) {
         die("unsupported Proxy Overlord Protocol version $1\n");
