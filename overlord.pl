@@ -16,8 +16,9 @@ use Getopt::Long;
 use strict;
 use warnings;
 use English;
-# JSON module is in Perl Core since Perl v5.14.
+# These are in Perl Core since Perl v5.14: corelist -v 5.14.0
 use JSON::PP;
+use HTTP::Tiny;
 
 
 my $MyListeningPort = 13128;
@@ -256,6 +257,30 @@ sub squidPid
     return int($pid);
 }
 
+# Should wait for all caching activity to stop, but currently only tracks
+# swapout activity. TODO: openfd_objects or another cache manager action
+# should account for (existing at the time of the first request) StoreEntry
+# objects that may _start_ caching as well as memory caching.
+sub finishCaching
+{
+    &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
+}
+
+# whether Squid has StoreEntries in SWAPOUT_WRITING state
+sub squidHasSwapouts
+{
+    # XXX: Require listening-ports
+    my $url = 'http://127.0.0.1:3128/squid-internal-mgr/openfd_objects';
+    my $response = HTTP::Tiny->new->get($url);
+    die("Cache manager request failure:\n" .
+        "Request URL: $url\n" .
+        "Response status: $response->{status} ($response->{reason})\n" .
+        $response->{content} . "\nnear")
+        unless $response->{success} && $response->{status} == 200;
+
+    return $response->{content} =~ /SWAPOUT_WRITING/;
+}
+
 sub parseOptions
 {
     my ($header) = @_;
@@ -282,8 +307,11 @@ sub handleClient
     die("client disconnected before sending the request\n") unless length $header;
     die("client disconnected before completing the request header:\$header\n") unless $sawCrLf;
 
+    my $SupportedVersion = '2';
     if ($header =~ m@^Pop-Version:\s*(\S*)@im) {
-        die("unsupported Proxy Overlord Protocol version $1\n");
+        die("unsupported Proxy Overlord Protocol version $1 in:\n$header\n") unless $1 eq $SupportedVersion;
+    } else {
+        die("unsupported Proxy Overlord Protocol version 1 in:\n$header\n");
     }
 
     if ($header =~ m@^POST\s+\S*/reset\s@s &&
@@ -312,6 +340,12 @@ sub handleClient
         my %options = &parseOptions($header);
         &stopSquid();
         &startSquidInBackground(\%options);
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
+        &finishCaching();
         &sendOkResponse($client);
         return;
     }
