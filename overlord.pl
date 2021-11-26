@@ -73,13 +73,16 @@ sub checkSquid
 
 sub stopSquid
 {
-    &shutdownSquid() if &squidIsRunning();
+    my $running = &squidIsRunning();
+    &shutdownSquid($running->[0]) if $running;
     warn("Squid is not running\n");
 }
 
 sub shutdownSquid
 {
-    my $pid = &squidPid();
+    my ($pid) = @_;
+    die() unless defined $pid;
+
     kill('SIGZERO', $pid) == 1 or die("cannot signal Squid ($pid): $EXTENDED_OS_ERROR\n");
     warn("shutting Squid ($pid) down...\n");
     kill('SIGINT', $pid) or return;
@@ -188,24 +191,27 @@ sub waitFor
     }
 }
 
+# returns [PID] if Squid is running (with the returned PID)
+# returns undef() otherwise
 sub squidIsRunning() {
-    # assume not running because there is no PID
-    return 0 unless -e $SquidPidFilename;
-
     my $pid = &squidPid();
+
+    # assume not running because there is no (PID in a stable) PID file
+    return undef() unless defined $pid;
+
     my $killed = kill('SIGZERO', $pid);
     $killed = -1 unless defined $killed;
 
     # clearly running
-    return 1 if $killed == 1;
+    return [ $pid ] if $killed == 1;
 
     if ($killed == 0 && $!{ESRCH}) {
         warn("assuming Squid ($pid) has died");
-        return 0;
+        return undef();
     }
 
     warn("assume Squid ($pid) is running: $EXTENDED_OS_ERROR\n");
-    return 1;
+    return [ $pid ];
 }
 
 sub squidIsListeningOnAllPorts() {
@@ -246,13 +252,34 @@ sub squidIsListeningOn() {
 
 sub squidPid
 {
-    my $in = IO::File->new("< $SquidPidFilename")
-        or die("cannot open $SquidPidFilename: $!\n");
-    # XXX: For empty files, "cannot read" below is misleading.
-    my $pid = $in->getline() or die("cannot read $SquidPidFilename: $!\n");
+    # optional argument: whether the file contents was empty a few seconds ago
+    my ($wasEmpty) = @_;
+
+    my $in = IO::File->new("< $SquidPidFilename");
+    if (!$in) {
+        # ENOENT is a common case not worth warning about
+        die("no OS support for ENOENT") unless exists $OS_ERROR{ENOENT};
+        warn("cannot open $SquidPidFilename: $!\n") unless $OS_ERROR{ENOENT};
+        return undef();
+    }
+
+    my $pid = $in->getline();
+    die("cannot read $SquidPidFilename: $!\n") unless defined $pid;
     $in->close();
 
-    chomp($pid);
+    if (!length $pid) {
+        # empty PID file; wait and retry, unless we have done that already
+        if ($wasEmpty) {
+            warn("stable but empty $SquidPidFilename; assuming no running Squid\n");
+            return undef();
+        }
+
+        warn("waiting to give Squid a chance to finish writing its PID file: SquidPidFilename\n");
+        sleep(5);
+        return &squidPid(1);
+    }
+
+    die("missing new line in $SquidPidFilename") unless chomp($pid) > 0;
     die("malformed PID value: $pid") unless $pid =~ /^\d+$/;
     return int($pid);
 }
