@@ -38,6 +38,8 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
+my $SupportedPopVersion = '2';
+
 # (re)start Squid form scratch with the given configuration
 sub resetSquid
 {
@@ -334,9 +336,8 @@ sub handleClient
     die("client disconnected before sending the request\n") unless length $header;
     die("client disconnected before completing the request header:\$header\n") unless $sawCrLf;
 
-    my $SupportedVersion = '2';
     if ($header =~ m@^Pop-Version:\s*(\S*)@im) {
-        die("unsupported Proxy Overlord Protocol version $1 in:\n$header\n") unless $1 eq $SupportedVersion;
+        die("unsupported Proxy Overlord Protocol version $1 in:\n$header\n") unless $1 eq $SupportedPopVersion;
     } else {
         die("unsupported Proxy Overlord Protocol version 1 in:\n$header\n");
     }
@@ -467,7 +468,7 @@ my $server = IO::Socket::INET->new(
     Reuse     => 1,
     Listen    => 10, # SOMAXCONN
 ) or die("Cannot listen on on TCP port $MyListeningPort: $@\n");
-warn("Overlord listens on port $MyListeningPort\n");
+warn("Overlord v$SupportedPopVersion listens on port $MyListeningPort\n");
 
 if (&squidIsRunning()) {
     warn("Squid listens on port $SquidListeningPort: ",
