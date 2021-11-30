@@ -38,7 +38,41 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '2';
+my $SupportedPopVersion = '4';
+
+# Names of all supported POP request options (updated below).
+# There is also 'config_' but that "internal" option is added by us.
+my @SupportedOptionNames = ();
+
+# /start option
+my $onameListeningPorts = 'listening-ports';
+push @SupportedOptionNames, $onameListeningPorts;
+
+# /stop (and /restart) option
+my $onameShutdownManner = 'shutdown-manner';
+push @SupportedOptionNames, $onameShutdownManner;
+my %SignalsByShutdownManner = (
+    'gracefully' => 'SIGTERM',
+    'urgently' => 'SIGINT',
+    'immediately' => '-SIGKILL', # sent to the entire process group
+);
+my $OptStopDefault = 'immediately';
+die() unless exists $SignalsByShutdownManner{$OptStopDefault};
+
+my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
+
+# computes kill() signal name based on request $options
+sub shutdownSignalFromOptions
+{
+    my ($options) = @_;
+
+    my $manner = $options->{$onameShutdownManner};
+    $manner = $OptStopDefault unless defined $manner;
+
+    my $signal = $SignalsByShutdownManner{$manner};
+    die("unsupported $onameShutdownManner: $manner\n") unless defined $signal;
+    return $signal;
+}
 
 # (re)start Squid form scratch with the given configuration
 sub resetSquid
@@ -47,7 +81,7 @@ sub resetSquid
     my $config = $options->{config_};
     # warn("Resetting to:\n$config\n");
 
-    &stopSquid() if &squidIsRunning();
+    &stopSquid($options) if &squidIsRunning();
 
     &writeSquidConfiguration($config);
     # Ensure log directory existence
@@ -75,19 +109,23 @@ sub checkSquid
 
 sub stopSquid
 {
+    my ($options) = @_;
     my $running = &squidIsRunning();
-    &shutdownSquid($running->[0]) if $running;
+    &shutdownSquid($running->[0], $options) if $running;
     warn("Squid is not running\n");
 }
 
 sub shutdownSquid
 {
-    my ($pid) = @_;
+    my ($pid, $options) = @_;
     die() unless defined $pid;
+    die() unless defined $options;
+
+    my $signal = &shutdownSignalFromOptions($options);
 
     kill('SIGZERO', $pid) == 1 or die("cannot signal Squid ($pid): $EXTENDED_OS_ERROR\n");
-    warn("shutting Squid ($pid) down...\n");
-    kill('SIGINT', $pid) or return;
+    warn("shutting Squid ($pid) down (with $signal)...\n");
+    kill($signal, $pid) or return;
 
     &waitFor("deleted $SquidPidFilename", sub { ! &squidIsRunning() });
 }
@@ -314,9 +352,13 @@ sub parseOptions
 {
     my ($header) = @_;
 
-    my %options = ($header =~ m@^Overlord-(\S+):\s*([^\r\n]*)@img);
+    my %rawOptions = ($header =~ m@^Overlord-(\S+):\s*([^\r\n]*)@img);
     # convert keys to lowercase (so that we know what case they are in)
-    %options = map { lc($_) => $options{$_} } keys %options;
+    my %options = map { lc($_) => $rawOptions{$_} } keys %rawOptions;
+    foreach my $name (keys %options) {
+        die("unsupported POP option $name in:\n$header\n")
+            unless exists $SupportedOptionNameIndex{$name};
+    }
     return %options;
 }
 
@@ -359,14 +401,15 @@ sub handleClient
     }
 
     if ($header =~ m@^GET\s+\S*/stop\s@s) {
-        &stopSquid();
+        my %options = &parseOptions($header);
+        &stopSquid(\%options);
         &sendOkResponse($client);
         return;
     }
 
     if ($header =~ m@^GET\s+\S*/restart\s@s) {
         my %options = &parseOptions($header);
-        &stopSquid();
+        &stopSquid(\%options);
         &startSquidInBackground(\%options);
         &sendOkResponse($client);
         return;
