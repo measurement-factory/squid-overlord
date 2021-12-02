@@ -320,7 +320,7 @@ sub squidPid
         return undef();
     }
 
-    warn("waiting to give Squid a chance to finish writing its PID file: SquidPidFilename\n");
+    warn("waiting to give Squid a chance to finish writing its PID file: $SquidPidFilename\n");
     sleep(5);
     return &squidPid(1);
 }
