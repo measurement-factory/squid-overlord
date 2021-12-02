@@ -303,25 +303,26 @@ sub squidPid
         return undef();
     }
 
-    my $pid = $in->getline();
-    die("cannot read $SquidPidFilename: $!\n") unless defined $pid;
-    $in->close();
-
-    if (!length $pid) {
-        # empty PID file; wait and retry, unless we have done that already
-        if ($wasEmpty) {
-            warn("stable but empty $SquidPidFilename; assuming no running Squid\n");
-            return undef();
-        }
-
-        warn("waiting to give Squid a chance to finish writing its PID file: SquidPidFilename\n");
-        sleep(5);
-        return &squidPid(1);
+    undef $!;
+    if (defined(my $pid = $in->getline())) {
+        $in->close();
+        die("missing new line in $SquidPidFilename containing just '$pid'") unless chomp($pid) > 0;
+        die("malformed PID value $pid") unless $pid =~ /^\d+$/;
+        return int($pid);
     }
 
-    die("missing new line in $SquidPidFilename") unless chomp($pid) > 0;
-    die("malformed PID value: $pid") unless $pid =~ /^\d+$/;
-    return int($pid);
+    die("cannot read $SquidPidFilename: $!\n") if $!;
+
+    # empty PID file
+
+    if ($wasEmpty) {
+        warn("stable but empty $SquidPidFilename; assuming no running Squid\n");
+        return undef();
+    }
+
+    warn("waiting to give Squid a chance to finish writing its PID file: SquidPidFilename\n");
+    sleep(5);
+    return &squidPid(1);
 }
 
 # Should wait for all caching activity to stop, but currently only tracks
