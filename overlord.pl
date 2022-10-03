@@ -175,7 +175,8 @@ sub startSquid_
     my @extraOptions = @_;
 
     my $cmd = "";
-    $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
+    # XXX: Cannot do that on Github Actions Ubuntu runner: Permission denied
+    # $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
     $cmd .= "ulimit -n 10240; ";
     $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
