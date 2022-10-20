@@ -265,30 +265,25 @@ sub squidIsListeningOnAllPorts() {
     my (@ports) = split(/\s*,\s*/, $options->{$pname});
     die("cannot determine Squid listening ports") unless @ports;
 
-    foreach my $port (@ports) {
-        return 0 unless &squidIsListeningOn($port);
-    }
-    return 1;
+    return &squidIsListeningOn(@ports);
 }
 
 sub squidIsListeningOn() {
-    my ($port) = @_;
-    die() unless defined $port;
+    my @ports = @_;
+    die() unless @ports;
+    die() unless defined $ports[0];
 
-    # TODO: Check that lsof works at all: -p $$
+    my $cmd = "netstat --numeric --wide --listening --tcp";
+    my $netstat = IO::File->new("$cmd |") or die("cannot start $cmd: $!\n");
+    my @lines = $netstat->getlines() or die("cannot read from $cmd: $!\n");
+    $netstat->close(); # often fails with "No child processes"
 
-    # We do not specify the IP address part because
-    # lsof -i@127.0.0.1 fails when Squid is listening on [::].
-    # Should we configure Squid to listen on a special-to-us ipv4-only port?
-    my $lsof = "lsof -Fn -w -i:$port";
-    if (system("$lsof > /dev/null 2>&1") == 0) {
-        #warn("somebody is listening on port $port\n");
-        return 1;
-    } else {
-        #warn("nobody listens on port $port\n");
-        system($lsof); # will show usage error/problem if any
-        return 0;
+    foreach my $port (@ports) {
+        # find :port in the first (out of two) columns containing ports
+        my ($firstMatch) = grep { /:\Q$port\E\s.*:/ } @lines;
+        return 0 unless defined $firstMatch;
     }
+    return 1;
 }
 
 sub squidPid
