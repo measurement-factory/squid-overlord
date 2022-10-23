@@ -167,7 +167,7 @@ sub startSquidInBackground
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
     &waitFor("Squid with all kids registered", sub { return &squidHasAllKids($options); });
-    warn("Squid is listening\n" . `ps aux | grep squid`);
+    warn("Squid is listening\n");
 }
 
 sub runSquidInForeground
@@ -346,15 +346,6 @@ sub finishCaching
 sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
-
-    warn("current ps:\n" . `ps aux | grep squid`);
-
-    # my $lastLog = "/tmp/t-last-mgr.log";
-    # my $out = IO::File->new(">> $lastLog") or die("cannot create $lastLog: $!\n");
-    # $out->print("\nPID: $$\n") or die("cannot write $lastLog: $!\n");
-    # $out->print($response->{content}) or die("cannot write $lastLog: $!\n");
-    # $out->close() or die("cannot finalize $lastLog: $!\n");
-
     return $mgrPage =~ /SWAPOUT_WRITING/;
 }
 
@@ -372,7 +363,6 @@ sub squidHasAllKids
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     # how many kids completed their by kidN {...} by kidN reports
     my $kidsRegistered = () = $mgrPage =~ /^[}] by kid\d+/mg;
-    warn("kids expected: $kidsExpected; registered: $kidsRegistered\n");
 
     return 1 if !$kidsExpected && !$kidsRegistered; # no-SMP
 
@@ -399,8 +389,6 @@ sub getCacheManagerResponse
         $response->{content} . "\nnear")
         unless $response->{success} && $response->{status} == 200;
 
-    warn("cache manager response headers:\n", Dumper($response->{headers}));
-    warn("current $pageId:\n", $response->{content});
     return $response;
 }
 
