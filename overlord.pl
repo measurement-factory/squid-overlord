@@ -16,11 +16,11 @@ use Getopt::Long;
 use strict;
 use warnings;
 use English;
-# These are in Perl Core since Perl v5.14: corelist -v 5.14.0
-use JSON::PP;
-use HTTP::Tiny;
-
+# These are in Perl Core since Perl v5.14 (or earlier; see corelist -v 5.14.0)
 use Data::Dumper;
+use HTTP::Tiny;
+use JSON::PP;
+
 
 my $MyListeningPort = 13128;
 my $SquidPrefix = "/usr/local/squid";
@@ -39,13 +39,13 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '4';
+my $SupportedPopVersion = '5';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
 my @SupportedOptionNames = ();
 
-# /start option
+# /reset option
 my $onameListeningPorts = 'listening-ports';
 push @SupportedOptionNames, $onameListeningPorts;
 
@@ -59,6 +59,10 @@ my %SignalsByShutdownManner = (
 );
 my $OptStopDefault = 'immediately';
 die() unless exists $SignalsByShutdownManner{$OptStopDefault};
+
+# /reset and /restart option
+my $onameKidsExpected = 'kids-expected';
+push @SupportedOptionNames, $onameKidsExpected;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -80,7 +84,7 @@ sub resetSquid
 {
     my ($options) = @_;
     my $config = $options->{config_};
-    warn("Resetting Squid");
+    warn("Resetting Squid\n");
     # warn("Resetting to:\n$config\n");
 
     &stopSquid($options) if &squidIsRunning();
@@ -162,6 +166,7 @@ sub startSquidInBackground
     &startSquid_();
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
+    &waitFor("Squid with all kids registered", sub { return &squidHasAllKids($options); });
     warn("Squid is listening\n" . `ps aux | grep squid`);
 }
 
@@ -262,9 +267,7 @@ sub squidIsListeningOnAllPorts() {
 
     # We do not parse http_port lines because they may have ${process_number}
     # and/or may be affected by macros.
-    my $pname = 'listening-ports';
-    die("missing $pname in ", join(",", keys %{$options})) unless defined $options->{$pname};
-    my (@ports) = split(/\s*,\s*/, $options->{$pname});
+    my (@ports) = split(/\s*,\s*/, &requiredOption($onameListeningPorts, $options));
     die("cannot determine Squid listening ports") unless @ports;
 
     return &squidIsListeningOn(@ports);
@@ -286,6 +289,13 @@ sub squidIsListeningOn() {
         return 0 unless defined $firstMatch;
     }
     return 1;
+}
+
+sub requiredOption() {
+    my ($oname, $options) = @_;
+    my $result = $options->{$oname};
+    die("missing $oname in ", join(",", keys %{$options})) unless defined $result;
+    return $result;
 }
 
 sub squidPid
@@ -335,25 +345,63 @@ sub finishCaching
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
 sub squidHasSwapouts
 {
-    # XXX: Require listening-ports
-    my $url = 'http://127.0.0.1:3128/squid-internal-mgr/openfd_objects';
-    my $response = HTTP::Tiny->new->get($url);
-    die("Cache manager request failure:\n" .
-        "Request URL: $url\n" .
-        "Response status: $response->{status} ($response->{reason})\n" .
-        $response->{content} . "\nnear")
-        unless $response->{success} && $response->{status} == 200;
+    my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
 
-    warn("swapout response hedaders:\n", Dumper($response->{headers}));
-    warn("current swapouts:\n", $response->{content});
     warn("current ps:\n" . `ps aux | grep squid`);
+
     # my $lastLog = "/tmp/t-last-mgr.log";
     # my $out = IO::File->new(">> $lastLog") or die("cannot create $lastLog: $!\n");
     # $out->print("\nPID: $$\n") or die("cannot write $lastLog: $!\n");
     # $out->print($response->{content}) or die("cannot write $lastLog: $!\n");
     # $out->close() or die("cannot finalize $lastLog: $!\n");
 
-    return $response->{content} =~ /SWAPOUT_WRITING/;
+    return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+# whether all Squid kid processes have registered with Coordinator
+# assumes that Squid is running and listening
+sub squidHasAllKids
+{
+    my ($options) = @_;
+
+    my $kidsExpected = &requiredOption($onameKidsExpected, $options);
+
+    # Any mgr action that reports per-kid statistics for all kids would work.
+    # TODO: If there is a disker, we should (also) wait for kids to find the
+    # disker strand (mtFindStrand). Is there a mgr page reflecting that state?
+    my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
+    # how many kids completed their by kidN {...} by kidN reports
+    my $kidsRegistered = () = $mgrPage =~ /^[}] by kid\d+/mg;
+    warn("kids expected: $kidsExpected; registered: $kidsRegistered\n");
+
+    return 1 if !$kidsExpected && !$kidsRegistered; # no-SMP
+
+    # Coordinator is not explicitly visible in cache manager output, but
+    # without it, there would be no successful SMP cache manager output.
+    die("unexpected kids: $kidsRegistered >= $kidsExpected; stopped")
+        if $kidsRegistered >= $kidsExpected;
+
+    return ($kidsRegistered + 1 == $kidsExpected) ? 1 : 0;
+}
+
+# successful Http::Tiny response object for a given mgr:page ID
+sub getCacheManagerResponse
+{
+    my ($pageId) = @_;
+    die() unless defined $pageId;
+
+    my $url = "http://127.0.0.1:3128/squid-internal-mgr/$pageId";
+    my $response = HTTP::Tiny->new->get($url);
+    die("Cache manager request failure:\n" .
+        "Request URL: $url\n" .
+        "Response status: $response->{status} ($response->{reason})\n" .
+        Dumper($response->{headers}) . "\n" .
+        $response->{content} . "\nnear")
+        unless $response->{success} && $response->{status} == 200;
+
+    warn("cache manager response headers:\n", Dumper($response->{headers}));
+    warn("current $pageId:\n", $response->{content});
+    return $response;
 }
 
 sub parseOptions
