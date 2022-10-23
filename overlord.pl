@@ -20,6 +20,7 @@ use English;
 use JSON::PP;
 use HTTP::Tiny;
 
+use Data::Dumper;
 
 my $MyListeningPort = 13128;
 my $SquidPrefix = "/usr/local/squid";
@@ -79,6 +80,7 @@ sub resetSquid
 {
     my ($options) = @_;
     my $config = $options->{config_};
+    warn("Resetting Squid");
     # warn("Resetting to:\n$config\n");
 
     &stopSquid($options) if &squidIsRunning();
@@ -160,7 +162,7 @@ sub startSquidInBackground
     &startSquid_();
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
-    warn("Squid is listening\n");
+    warn("Squid is listening\n" . `ps aux | grep squid`);
 }
 
 sub runSquidInForeground
@@ -341,6 +343,15 @@ sub squidHasSwapouts
         "Response status: $response->{status} ($response->{reason})\n" .
         $response->{content} . "\nnear")
         unless $response->{success} && $response->{status} == 200;
+
+    warn("swapout response hedaders:\n", Dumper($response->{headers}));
+    warn("current swapouts:\n", $response->{content});
+    warn("current ps:\n" . `ps aux | grep squid`);
+    # my $lastLog = "/tmp/t-last-mgr.log";
+    # my $out = IO::File->new(">> $lastLog") or die("cannot create $lastLog: $!\n");
+    # $out->print("\nPID: $$\n") or die("cannot write $lastLog: $!\n");
+    # $out->print($response->{content}) or die("cannot write $lastLog: $!\n");
+    # $out->close() or die("cannot finalize $lastLog: $!\n");
 
     return $response->{content} =~ /SWAPOUT_WRITING/;
 }
