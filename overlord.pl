@@ -167,7 +167,7 @@ sub startSquidInBackground
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
     &waitFor("Squid with all kids registered", sub { return &squidHasAllKids($options); });
-    warn("Squid is listening\n");
+    warn("Squid is running and ready\n");
 }
 
 sub runSquidInForeground
