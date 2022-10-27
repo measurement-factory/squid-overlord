@@ -64,6 +64,12 @@ die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 my $onameKidsExpected = 'kids-expected';
 push @SupportedOptionNames, $onameKidsExpected;
 
+my $onameRequestPath = 'request-path';
+push @SupportedOptionNames, $onameRequestPath;
+
+my $onameCollapsedCount = 'collapsed-count';
+push @SupportedOptionNames, $onameCollapsedCount;
+
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
 # computes kill() signal name based on request $options
@@ -342,6 +348,35 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
+sub waitCollapsed
+{
+    my ($options) = @_;
+
+    my $requestPath = $options->{$onameRequestPath};
+    die("missing $onameRequestPath\n") unless defined $requestPath;
+    my $collapsedCount = $options->{$onameCollapsedCount};
+    die("missing $onameCollapsedCount\n") unless defined $collapsedCount;
+
+    my ($path, $count) = @_;
+    &waitFor("all collapsed", sub { &squidActiveRequests($requestPath, $collapsedCount) });
+}
+
+sub squidActiveRequests
+{
+    my $path = shift;
+    my $count = shift;
+    my $url = 'http://127.0.0.1:3128/squid-internal-mgr/active_requests';
+    my $response = HTTP::Tiny->new->get($url);
+    die("Cache manager request failure:\n" .
+        "Request URL: $url\n" .
+        "Response status: $response->{status} ($response->{reason})\n" .
+        $response->{content} . "\nnear")
+        unless $response->{success} && $response->{status} == 200;
+
+    my @matches = $response->{content} =~ /Spath/g;
+    return scalar @matches >= $count;
+}
+
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
 sub squidHasSwapouts
 {
@@ -461,6 +496,13 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
         &finishCaching();
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/waitCollapsed\s@s) {
+        my %options = &parseOptions($header);
+        &waitCollapsed(\%options);
         &sendOkResponse($client);
         return;
     }
