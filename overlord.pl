@@ -361,27 +361,20 @@ sub waitCollapsed
     &waitFor("all collapsed", sub { &squidActiveRequests($requestPath, $collapsedCount) });
 }
 
-sub squidActiveRequests
-{
-    my $path = shift;
-    my $count = shift;
-    my $url = 'http://127.0.0.1:3128/squid-internal-mgr/active_requests';
-    my $response = HTTP::Tiny->new->get($url);
-    die("Cache manager request failure:\n" .
-        "Request URL: $url\n" .
-        "Response status: $response->{status} ($response->{reason})\n" .
-        $response->{content} . "\nnear")
-        unless $response->{success} && $response->{status} == 200;
-
-    my @matches = $response->{content} =~ /Spath/g;
-    return scalar @matches >= $count;
-}
-
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
 sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+sub squidActiveRequests
+{
+    my $path = shift;
+    my $count = shift;
+    my $mgrPage = &getCacheManagerResponse('active_requests')->{content};
+    my @matches = $mgrPage =~ /$path/g;
+    return scalar @matches >= $count;
 }
 
 # whether all Squid kid processes have registered with Coordinator
