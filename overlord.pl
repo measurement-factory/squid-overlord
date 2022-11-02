@@ -64,11 +64,13 @@ die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 my $onameKidsExpected = 'kids-expected';
 push @SupportedOptionNames, $onameKidsExpected;
 
+# /waitActiveRequests option
 my $onameRequestPath = 'request-path';
 push @SupportedOptionNames, $onameRequestPath;
 
-my $onameCollapsedCount = 'collapsed-count';
-push @SupportedOptionNames, $onameCollapsedCount;
+# /waitActiveRequests option
+my $onameActiveRequestsCount = 'active-requests-count';
+push @SupportedOptionNames, $onameActiveRequestsCount;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -348,17 +350,17 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
-sub waitCollapsed
+sub waitActiveRequests
 {
     my ($options) = @_;
 
     my $requestPath = $options->{$onameRequestPath};
     die("missing $onameRequestPath\n") unless defined $requestPath;
-    my $collapsedCount = $options->{$onameCollapsedCount};
-    die("missing $onameCollapsedCount\n") unless defined $collapsedCount;
+    my $activeRequestsCount = $options->{$onameActiveRequestsCount};
+    die("missing $onameActiveRequestsCount\n") unless defined $activeRequestsCount;
 
     my ($path, $count) = @_;
-    &waitFor("all collapsed", sub { &squidActiveRequests($requestPath, $collapsedCount) });
+    &waitFor("until all $activeRequestsCount requests become active", sub { &squidActiveRequests($requestPath, $activeRequestsCount) });
 }
 
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
@@ -493,9 +495,9 @@ sub handleClient
         return;
     }
 
-    if ($header =~ m@^GET\s+\S*/waitCollapsed\s@s) {
+    if ($header =~ m@^GET\s+\S*/waitActiveRequests\s@s) {
         my %options = &parseOptions($header);
-        &waitCollapsed(\%options);
+        &waitActiveRequests(\%options);
         &sendOkResponse($client);
         return;
     }
