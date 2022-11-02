@@ -381,7 +381,8 @@ sub getCacheManagerResponse
     die() unless defined $pageId;
 
     my $url = "http://127.0.0.1:3128/squid-internal-mgr/$pageId";
-    my $response = HTTP::Tiny->new->get($url);
+    my %extraHeaders = ("Cache-Control" => "no-store");
+    my $response = HTTP::Tiny->new->get($url, { headers => \%extraHeaders });
     die("Cache manager request failure:\n" .
         "Request URL: $url\n" .
         "Response status: $response->{status} ($response->{reason})\n" .
