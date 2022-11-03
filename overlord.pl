@@ -360,7 +360,8 @@ sub waitActiveRequests
     die("missing $onameActiveRequestsCount\n") unless defined $activeRequestsCount;
 
     my ($path, $count) = @_;
-    &waitFor("until all $activeRequestsCount requests become active", sub { &squidActiveRequests($requestPath, $activeRequestsCount) });
+    &waitFor("all $activeRequestsCount requests to become active", sub {
+            &countMatchingActiveRequests($requestPath) == $activeRequestsCount });
 }
 
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
@@ -370,13 +371,12 @@ sub squidHasSwapouts
     return $mgrPage =~ /SWAPOUT_WRITING/;
 }
 
-sub squidActiveRequests
+sub countMatchingActiveRequests
 {
     my $path = shift;
-    my $count = shift;
     my $mgrPage = &getCacheManagerResponse('active_requests')->{content};
-    my @matches = $mgrPage =~ /$path/g;
-    return scalar @matches >= $count;
+    my @matches = $mgrPage =~ /^uri\s.*$path$/mg;
+    return scalar @matches;
 }
 
 # whether all Squid kid processes have registered with Coordinator
