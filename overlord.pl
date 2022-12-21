@@ -360,7 +360,7 @@ sub waitActiveRequests
     die("missing $onameActiveRequestsCount\n") unless defined $activeRequestsCount;
 
     my ($path, $count) = @_;
-    &waitFor("all $activeRequestsCount requests to become active", sub {
+    &waitFor("exactly $activeRequestsCount requests to become active", sub {
             &countMatchingActiveRequests($requestPath) == $activeRequestsCount });
 }
 
