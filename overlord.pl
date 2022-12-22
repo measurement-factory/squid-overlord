@@ -39,7 +39,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '5';
+my $SupportedPopVersion = '6';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -63,6 +63,14 @@ die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 # /reset and /restart option
 my $onameKidsExpected = 'kids-expected';
 push @SupportedOptionNames, $onameKidsExpected;
+
+# /waitActiveRequests option
+my $onameRequestPath = 'request-path';
+push @SupportedOptionNames, $onameRequestPath;
+
+# /waitActiveRequests option
+my $onameActiveRequestsCount = 'active-requests-count';
+push @SupportedOptionNames, $onameActiveRequestsCount;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -342,11 +350,33 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
+sub waitActiveRequests
+{
+    my ($options) = @_;
+
+    my $requestPath = $options->{$onameRequestPath};
+    die("missing $onameRequestPath\n") unless defined $requestPath;
+    my $activeRequestsCount = $options->{$onameActiveRequestsCount};
+    die("missing $onameActiveRequestsCount\n") unless defined $activeRequestsCount;
+
+    my ($path, $count) = @_;
+    &waitFor("exactly $activeRequestsCount requests to become active", sub {
+            &countMatchingActiveRequests($requestPath) == $activeRequestsCount });
+}
+
 # whether Squid has StoreEntries in SWAPOUT_WRITING state
 sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+sub countMatchingActiveRequests
+{
+    my $path = shift;
+    my $mgrPage = &getCacheManagerResponse('active_requests')->{content};
+    my @matches = $mgrPage =~ /^uri\s.*$path$/mg;
+    return scalar @matches;
 }
 
 # whether all Squid kid processes have registered with Coordinator
@@ -462,6 +492,13 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
         &finishCaching();
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/waitActiveRequests\s@s) {
+        my %options = &parseOptions($header);
+        &waitActiveRequests(\%options);
         &sendOkResponse($client);
         return;
     }
