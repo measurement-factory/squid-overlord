@@ -112,7 +112,7 @@ sub checkSquid
 
     my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
     # split into individual problems, removing the trailing LF from each problem
-    $report->{problems} = [ split(/\n$|\n[^\s]/s, $problems) ];
+    $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
 
     my $xactLogged = `cat $SquidLogsDirname/access-*.log | wc -l`;
     $xactLogged =~ s/^\s+|\s+$//sg; # remove leading and trailing whitespace
