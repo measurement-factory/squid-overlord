@@ -141,7 +141,7 @@ sub shutdownSquid
     warn("shutting Squid ($pid) down (with $signal)...\n");
     kill($signal, $pid) or return;
 
-    &waitFor("deleted $SquidPidFilename", sub { ! &squidIsRunning() });
+    &waitFor("no running Squid", sub { ! &squidIsRunning() });
 }
 
 sub resetLogs
@@ -262,7 +262,9 @@ sub squidIsRunning() {
     return [ $pid ] if $killed == 1;
 
     if ($killed == 0 && $!{ESRCH}) {
-        warn("assuming Squid ($pid) has died");
+        warn("assuming Squid ($pid) has died; removing its PID file");
+        system("rm -f $SquidPidFilename") == 0 or die("cannot remove $SquidPidFilename: $EXTENDED_OS_ERROR\n");
+        die("failed to remove $SquidPidFilename\n") if &squidPid();
         return undef();
     }
 
