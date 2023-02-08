@@ -39,7 +39,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '6';
+my $SupportedPopVersion = '7';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -110,8 +110,9 @@ sub checkSquid
 {
     my $report = {};
 
-    $report->{problems} = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
-    $report->{problems} = '' unless $report->{problems} =~ /\S/;
+    my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
+    # split into individual problems, removing the trailing LF from each problem
+    $report->{problems} = [ split(/\n$|\n[^\s]/s, $problems) ];
 
     my $xactLogged = `cat $SquidLogsDirname/access-*.log | wc -l`;
     $xactLogged =~ s/^\s+|\s+$//sg; # remove leading and trailing whitespace
