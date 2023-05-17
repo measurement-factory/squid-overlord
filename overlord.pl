@@ -242,6 +242,7 @@ sub waitFor
 {
     my ($description, $goalFunction) = @_;
 
+    warn("will be waiting for $description\n");
     for (my $iterations = 0; !&{$goalFunction}; ++$iterations) {
         warn("waiting for $description\n") if $iterations % 60 == 0;
         sleep(1);
@@ -415,7 +416,9 @@ sub getCacheManagerResponse
 
     my $url = "http://127.0.0.1:3128/squid-internal-mgr/$pageId";
     my %extraHeaders = ("Cache-Control" => "no-store");
+    warn("will send a cache manager request for $url\n");
     my $response = HTTP::Tiny->new->get($url, { headers => \%extraHeaders });
+    warn("sent a cache manager request\n");
     die("Cache manager request failure:\n" .
         "Request URL: $url\n" .
         "Response status: $response->{status} ($response->{reason})\n" .
