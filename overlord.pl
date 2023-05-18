@@ -16,6 +16,7 @@ use Getopt::Long;
 use strict;
 use warnings;
 use English;
+use File::Basename;
 # These are in Perl Core since Perl v5.14 (or earlier; see corelist -v 5.14.0)
 use Data::Dumper;
 use HTTP::Tiny;
@@ -39,7 +40,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '7';
+my $SupportedPopVersion = '8';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -113,11 +114,6 @@ sub checkSquid
     my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
     # split into individual problems, removing the trailing LF from each problem
     $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
-
-    my $xactLogged = `cat $SquidLogsDirname/access-*.log | wc -l`;
-    $xactLogged =~ s/^\s+|\s+$//sg; # remove leading and trailing whitespace
-    $xactLogged = 0 unless $xactLogged =~ /\S/;
-    $report->{transactionCount} = $xactLogged =~ /^\d+$/s ? int($xactLogged) : $xactLogged;
 
     return $report;
 }
@@ -429,6 +425,20 @@ sub getCacheManagerResponse
     return $response;
 }
 
+sub getAccessRecords
+{
+    my $records = {};
+    while (glob "$SquidLogsDirname/access*.log") {
+        my $logName = $_;
+        my $in = IO::File->new($logName, "r") or die("cannot read $logName: $!\n");
+        my @lines = $in->getlines();
+        # TODO: Set a custom User-Agent to filter out our own requests.
+        $records->{basename $logName} = [ grep { !/squid-internal-mgr/ } @lines ];
+        warn("lines in $_: $#lines\n");
+    }
+    return $records;
+}
+
 sub parseOptions
 {
     my ($header) = @_;
@@ -496,6 +506,12 @@ sub handleClient
         return;
     }
 
+    if ($header =~ m@^GET\s+\S*/getAccessRecords\s@s) {
+        my $records = &getAccessRecords();
+        &sendOkResponse($client, {accessRecords => $records});
+        return;
+    }
+
     if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
         &finishCaching();
         &sendOkResponse($client);
@@ -534,9 +550,11 @@ sub writeError
 
 sub sendOkResponse
 {
-    my ($client) = @_;
-    my $report = &checkSquid();
-    return &sendResponse($client, "200 OK", encode_json($report));
+    my ($client, $answer) = @_;
+    my $body = {};
+    $body->{health} = &checkSquid();
+    $body->{answer} = $answer if defined $answer;
+    return &sendResponse($client, "200 OK", encode_json($body));
 }
 
 sub sendResponse
