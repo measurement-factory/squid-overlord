@@ -73,6 +73,10 @@ push @SupportedOptionNames, $onameRequestPath;
 my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
 
+# /finishJob option
+my $onameFinishJobType = 'job.type';
+push @SupportedOptionNames, $onameFinishJobType;
+
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
 # computes kill() signal name based on request $options
@@ -350,9 +354,13 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
-sub finishRockHeaderUpdating
+sub finishJobs
 {
-    &waitFor("rock header update completion", sub { ! &squidHasRockHeaderUpdate() });
+    my ($options) = @_;
+
+    my $jobType = $options->{$onameFinishJobType};
+    die("missing $onameFinishJobType\n") unless defined $jobType;
+    &waitFor("rock header update completion", sub { ! &squidHasRockHeaderUpdate($jobType) });
 }
 
 sub waitActiveRequests
@@ -379,8 +387,9 @@ sub squidHasSwapouts
 # whether some of Squid jobs are of Rock::HeaderUpdater type
 sub squidHasRockHeaderUpdate
 {
+    my $jobType = shift;
     my $mgrPage = &getCacheManagerResponse('jobs')->{content};
-    return $mgrPage =~ /Rock::HeaderUpdater/;
+    return $mgrPage =~ /^\s*type:\s*$jobType$/mg;
 }
 
 sub countMatchingActiveRequests
@@ -537,8 +546,9 @@ sub handleClient
         return;
     }
 
-    if ($header =~ m@^GET\s+\S*/finishRockHeaderUpdating\s@s) {
-        &finishRockHeaderUpdating();
+    if ($header =~ m@^GET\s+\S*/finishJobs\s@s) {
+        my %options = &parseOptions($header);
+        &finishJobs(\%options);
         &sendOkResponse($client);
         return;
     }
