@@ -360,7 +360,7 @@ sub finishJobs
 
     my $jobType = $options->{$onameFinishJobType};
     die("missing $onameFinishJobType\n") unless defined $jobType;
-    &waitFor("rock header update completion", sub { ! &squidHasRockHeaderUpdate($jobType) });
+    &waitFor("jobs matching '$jobType'", sub { ! &hasJob($jobType) });
 }
 
 sub waitActiveRequests
@@ -384,12 +384,12 @@ sub squidHasSwapouts
     return $mgrPage =~ /SWAPOUT_WRITING/;
 }
 
-# whether some of Squid jobs are of Rock::HeaderUpdater type
-sub squidHasRockHeaderUpdate
+# whether a job with a matching type still runs
+sub hasJob
 {
     my $jobType = shift;
     my $mgrPage = &getCacheManagerResponse('jobs')->{content};
-    return $mgrPage =~ /^\s*type:\s*$jobType$/mg;
+    return $mgrPage =~ /$jobType/m;
 }
 
 sub countMatchingActiveRequests
