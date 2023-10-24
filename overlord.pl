@@ -21,6 +21,7 @@ use File::Basename;
 use Data::Dumper;
 use HTTP::Tiny;
 use JSON::PP;
+use MIME::Base64;
 
 
 my $MyListeningPort = 13128;
@@ -74,7 +75,7 @@ my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
 
 # /finishJob option
-my $onameFinishJobType = 'job.type';
+my $onameFinishJobType = 'job.type-regex';
 push @SupportedOptionNames, $onameFinishJobType;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
@@ -389,7 +390,8 @@ sub hasJob
 {
     my $jobType = shift;
     my $mgrPage = &getCacheManagerResponse('jobs')->{content};
-    return $mgrPage =~ /$jobType/m;
+    my @jobs = ($mgrPage =~ m@^\s*type:\s*(\S+)@img);
+    return grep(/$jobType/, @jobs);
 }
 
 sub countMatchingActiveRequests
@@ -470,6 +472,12 @@ sub parseOptions
     foreach my $name (keys %options) {
         die("unsupported POP option $name in:\n$header\n")
             unless exists $SupportedOptionNameIndex{$name};
+        if ($name =~ m@^\S+-regex$@) {
+            my $regex = decode_base64($options{$name});
+            my $valid = eval { qr/$regex/ };
+            die "invalid regex: $@" if $@;
+            $options{$name} = $regex;
+        }
     }
     return %options;
 }
