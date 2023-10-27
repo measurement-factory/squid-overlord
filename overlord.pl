@@ -474,9 +474,7 @@ sub parseOptions
             unless exists $SupportedOptionNameIndex{$name};
         if ($name =~ m@^\S+-regex$@) {
             my $regex = decode_base64($options{$name});
-            my $valid = eval { qr/$regex/ };
-            die "invalid regex: $@" if $@;
-            $options{$name} = $regex;
+            $options{$name} = qr/$regex/;
         }
     }
     return %options;
