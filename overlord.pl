@@ -40,7 +40,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '8';
+my $SupportedPopVersion = '9';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -439,6 +439,12 @@ sub getAccessRecords
     return $records;
 }
 
+sub getCacheManagerMenu
+{
+    my $mgrPage = &getCacheManagerResponse('menu')->{content};
+    return $mgrPage;
+}
+
 sub parseOptions
 {
     my ($header) = @_;
@@ -509,6 +515,12 @@ sub handleClient
     if ($header =~ m@^GET\s+\S*/getAccessRecords\s@s) {
         my $records = &getAccessRecords();
         &sendOkResponse($client, {accessRecords => $records});
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/getCacheManagerMenu\s@s) {
+        my $menu = &getCacheManagerMenu();
+        &sendOkResponse($client, {menu => $menu});
         return;
     }
 
