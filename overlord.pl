@@ -391,8 +391,8 @@ sub squidHasAllKids
     # TODO: If there is a disker, we should (also) wait for kids to find the
     # disker strand (mtFindStrand). Is there a mgr page reflecting that state?
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
-    # how many kids completed their by kidN {...} by kidN reports
-    my $kidsRegistered = () = $mgrPage =~ /^[}] by kid\d+/mg;
+    # how many kids completed their per-kid reports
+    my $kidsRegistered = () = $mgrPage =~ /^([}] by kid\d+|\s+kid: \d+)/mg;
 
     return 1 if !$kidsExpected && !$kidsRegistered; # no-SMP
 
