@@ -111,7 +111,7 @@ sub checkSquid
 {
     my $report = {};
 
-    my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
+    my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|FATAL|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
     # split into individual problems, removing the trailing LF from each problem
     $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
 
