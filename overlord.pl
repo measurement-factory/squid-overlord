@@ -21,6 +21,7 @@ use File::Basename;
 use Data::Dumper;
 use HTTP::Tiny;
 use JSON::PP;
+use MIME::Base64;
 
 
 my $MyListeningPort = 13128;
@@ -76,6 +77,10 @@ push @SupportedOptionNames, $onameRequestPath;
 # /waitActiveRequests option
 my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
+
+# /finishJob option
+my $onameFinishJobType = 'job.type-regex';
+push @SupportedOptionNames, $onameFinishJobType;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -354,6 +359,15 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
+sub finishJobs
+{
+    my ($options) = @_;
+
+    my $jobType = $options->{$onameFinishJobType};
+    die("missing $onameFinishJobType\n") unless defined $jobType;
+    &waitFor("jobs matching '$jobType'", sub { ! &hasJob($jobType) });
+}
+
 sub waitActiveRequests
 {
     my ($options) = @_;
@@ -373,6 +387,15 @@ sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+# whether a job with a matching type still runs
+sub hasJob
+{
+    my $jobType = shift;
+    my $mgrPage = &getCacheManagerResponse('jobs')->{content};
+    my @jobs = ($mgrPage =~ m@^\s*type:\s*(\S+)@img);
+    return grep(/$jobType/, @jobs);
 }
 
 sub countMatchingActiveRequests
@@ -469,6 +492,10 @@ sub parseOptions
     foreach my $name (keys %options) {
         die("unsupported POP option $name in:\n$header\n")
             unless exists $SupportedOptionNameIndex{$name};
+        if ($name =~ m@^\S+-regex$@) {
+            my $regex = decode_base64($options{$name});
+            $options{$name} = qr/$regex/;
+        }
     }
     return %options;
 }
@@ -541,6 +568,13 @@ sub handleClient
     if ($header =~ m@^GET\s+\S*/waitActiveRequests\s@s) {
         my %options = &parseOptions($header);
         &waitActiveRequests(\%options);
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/finishJobs\s@s) {
+        my %options = &parseOptions($header);
+        &finishJobs(\%options);
         &sendOkResponse($client);
         return;
     }
