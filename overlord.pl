@@ -40,7 +40,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '8';
+my $SupportedPopVersion = '9';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -62,8 +62,12 @@ my $OptStopDefault = 'immediately';
 die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 
 # /reset and /restart option
-my $onameKidsExpected = 'kids-expected';
-push @SupportedOptionNames, $onameKidsExpected;
+my $onameWorkerCount = 'worker-count';
+push @SupportedOptionNames, $onameWorkerCount;
+
+# /reset and /restart option
+my $onameDiskerCount = 'disker-count';
+push @SupportedOptionNames, $onameDiskerCount;
 
 # /waitActiveRequests option
 my $onameRequestPath = 'request-path';
@@ -385,23 +389,39 @@ sub squidHasAllKids
 {
     my ($options) = @_;
 
-    my $kidsExpected = &requiredOption($onameKidsExpected, $options);
+    my $workersExpected = &requiredOption($onameWorkerCount, $options);
+    my $diskersExpected = &requiredOption($onameDiskerCount, $options);
 
-    # Any mgr action that reports per-kid statistics for all kids would work.
+    # cache manager action selection criteria:
+    # * non-aggregating or, to be more precise, contains a single kid-specific
+    #   section for each reporting kid and no aggregated sections
+    # * atomic (to reduce delays)
+    # * available in any Squid build
+    # * safe (i.e. unlikely to crash Squid)
+    # * light (i.e. does not trigger a lot of work or debugging)
+    my $action = 'events';
+
     # TODO: If there is a disker, we should (also) wait for kids to find the
     # disker strand (mtFindStrand). Is there a mgr page reflecting that state?
-    my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
-    # how many kids completed their per-kid reports
-    my $kidsRegistered = () = $mgrPage =~ /^([}] by kid\d+|[.]{3})/mg;
 
-    return 1 if !$kidsExpected && !$kidsRegistered; # no-SMP
+    my $mgrPage = &getCacheManagerResponse($action)->{content};
 
-    # Coordinator is not explicitly visible in cache manager output, but
-    # without it, there would be no successful SMP cache manager output.
-    die("unexpected kids: $kidsRegistered >= $kidsExpected; stopped")
-        if $kidsRegistered >= $kidsExpected;
+    # compute the number of closed kid-specific report sections
+    my $kidSections = () = $mgrPage =~ /^([}] by kid\d+|[.]{3})/mg;
 
-    return ($kidsRegistered + 1 == $kidsExpected) ? 1 : 0;
+    if ($workersExpected + $diskersExpected <= 1) {
+        # Non-SMP configuration: (0+0) or (1+0).
+        # In legacy Squids, there should be no kid-specific sections.
+        # In future YAML-reporting Squids, there should be one section.
+        die("unexpected kid sections in non-SMP mode: ($workersExpected + $diskersExpected) < $kidSections near $mgrPage")
+            unless $kidSections <= 1;
+        return 1;
+    } else {
+        # SMP configuration. A kid-specific section for each worker and disker.
+        die("unexpected kid sections in SMP mode; ($workersExpected + $diskersExpected) < $kidSections near $mgrPage")
+            if ($workersExpected + $diskersExpected) < $kidSections;
+        return (($workersExpected + $diskersExpected) == $kidSections) ? 1 : 0;
+    }
 }
 
 # successful Http::Tiny response object for a given mgr:page ID
