@@ -111,15 +111,16 @@ sub resetSquid
     &startSquidInBackground($options);
 }
 
+# ==00:00:00:02.432 2834323== ERROR_BEGIN_
 # ==00:00:00:02.432 2834323== 4 bytes in 1 blocks are definitely lost in loss record 8 of 631
 # ==00:00:00:02.432 2834323==    at 0x4848899: malloc (vg_replace_malloc.c:381)
-# ==00:00:00:02.432 2834323==    by 0xA4F4EC: xmalloc (xalloc.cc:105)
 # ...
 # ==00:00:00:02.432 2834323==    by 0x6D96D8: main (main.cc:1339)
 # ==00:00:00:02.432 2834323==
+# ==00:00:00:02.260 2969939== ERROR_END_
 #
 # Also extracts problematic LEAK SUMMARY records
-sub extractValgrindLossRecords
+sub extractValgrindErrors
 {
     my ($logName, $lines) = @_;
 
@@ -132,15 +133,15 @@ sub extractValgrindLossRecords
         my $line = sprintf("%s:%d:%s", $logName, $i, $lines->[$i]);
 
         if (defined $record) {
-            if ($line =~ /\s0x/) {
-                $record .= $line;
-            } else {
+            if ($line =~ /\bERROR_END_\b/) {
                 push @records, $record;
                 $record = undef();
+            } else {
+                $record .= $line;
             }
         } else {
-            if ($line =~ /lost in loss record/) {
-                $record = $line;
+            if ($line =~ /\bERROR_BEGIN_\b/) {
+                $record = '';
             }
             elsif ($line =~ /lost: [^0].* bytes in .* blocks/) {
                 $leakSummary = '' unless defined $leakSummary;
@@ -174,8 +175,8 @@ sub checkSquid
         if (my (@errorSummary) = grep { /ERROR SUMMARY: [^0]/ } @lines) {
             warn("ERRORs in $_: $errorSummary[0]\n");
 
-            my (@lossRecords) = &extractValgrindLossRecords($logName, \@lines);
-            push @{$report->{problems}}, @lossRecords;
+            my (@valgrindErrors) = &extractValgrindErrors($logName, \@lines);
+            push @{$report->{problems}}, @valgrindErrors;
         }
     }
 
@@ -302,6 +303,8 @@ sub startSquid_
 
     my $wrapper .= "valgrind
         --verbose
+        --show-error-list=yes
+        --error-markers=ERROR_BEGIN_,ERROR_END_
         --vgdb=no
         --trace-children=yes
         --child-silent-after-fork=no
