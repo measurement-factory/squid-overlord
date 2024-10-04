@@ -325,7 +325,15 @@ sub startSquid_
     # $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
     $cmd .= "ulimit -n 10240; ";
 
-    $cmd .= $wrapper unless grep { $_ eq '-z' } @extraOptions;
+# XXX: make conditional on something
+# * This should probably be controlled (e.g., explicitly disabled) by tests
+#   because running under valgrind slows things down quite a bit.
+#
+# * This should probably be controlled by an "Is valgrind installed?" check
+#   (and disabled unless the test explicitly requires valgrind) because folks
+#   might need to tests environments without valgrind installed.
+#
+# $cmd .= $wrapper unless grep { $_ eq '-z' } @extraOptions;
 
     $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
