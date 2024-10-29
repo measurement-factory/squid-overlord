@@ -40,7 +40,7 @@ my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
 
-my $SupportedPopVersion = '9';
+my $SupportedPopVersion = '10';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -61,11 +61,11 @@ my %SignalsByShutdownManner = (
 my $OptStopDefault = 'immediately';
 die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 
-# /reset and /restart option
+# /reset, /restart, and /reconfigure option
 my $onameWorkerCount = 'worker-count';
 push @SupportedOptionNames, $onameWorkerCount;
 
-# /reset and /restart option
+# /reset, /restart, and /reconfigure option
 my $onameDiskerCount = 'disker-count';
 push @SupportedOptionNames, $onameDiskerCount;
 
@@ -111,6 +111,53 @@ sub resetSquid
     &startSquidInBackground($options);
 }
 
+# ==00:00:00:02.432 2834323== ERROR_BEGIN_
+# ==00:00:00:02.432 2834323== 4 bytes in 1 blocks are definitely lost in loss record 8 of 631
+# ==00:00:00:02.432 2834323==    at 0x4848899: malloc (vg_replace_malloc.c:381)
+# ...
+# ==00:00:00:02.432 2834323==    by 0x6D96D8: main (main.cc:1339)
+# ==00:00:00:02.432 2834323==
+# ==00:00:00:02.260 2969939== ERROR_END_
+#
+# Also extracts problematic LEAK SUMMARY records
+sub extractValgrindErrors
+{
+    my ($logName, $lines) = @_;
+
+    my $leakSummary = undef();
+
+    my @records = ();
+    my $record = undef();
+    for (my $i = 0; $i <= $#{$lines}; ++$i) {
+        # emulate `grep -n` output (when grep is searching through multiple files)
+        my $line = sprintf("%s:%d:%s", $logName, $i, $lines->[$i]);
+
+        if (defined $record) {
+            if ($line =~ /\bERROR_END_\b/) {
+                push @records, $record;
+                $record = undef();
+            } else {
+                $record .= $line;
+            }
+        } else {
+            if ($line =~ /\bERROR_BEGIN_\b/) {
+                $record = '';
+            }
+            elsif ($line =~ /lost: [^0].* bytes in .* blocks/) {
+                $leakSummary = '' unless defined $leakSummary;
+                $leakSummary .= $line;
+            }
+        }
+    }
+
+    # in case the log ends with a truncated loss record
+    push @records, $record if defined $record;
+
+    push @records, $leakSummary if defined $leakSummary;
+
+    return (@records);
+}
+
 sub checkSquid
 {
     my $report = {};
@@ -118,6 +165,21 @@ sub checkSquid
     my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|FATAL|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
     # split into individual problems, removing the trailing LF from each problem
     $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
+
+    while (glob "$SquidLogsDirname/valgrind*.log") {
+        # TODO: Encapsulate this duplicated code.
+        my $logName = $_;
+        my $in = IO::File->new($logName, "r") or die("cannot read $logName: $!\n");
+        my @lines = $in->getlines();
+
+        if (my (@errorSummary) = grep { /ERROR SUMMARY: [^0]/ } @lines) {
+            warn("ERRORs in $_: $errorSummary[0]\n");
+
+            my (@valgrindErrors) = &extractValgrindErrors($logName, \@lines);
+            push @{$report->{problems}}, @valgrindErrors;
+        }
+    }
+
 
     return $report;
 }
@@ -143,6 +205,55 @@ sub shutdownSquid
     kill($signal, $pid) or return;
 
     &waitFor("no running Squid", sub { ! &squidIsRunning() });
+}
+
+sub reconfigurationLines
+{
+    my $stats = {};
+    $stats->{reconfiguringLines} = `grep -aF 'Reconfiguring Squid Cache' $SquidLogsDirname/cache-*.log | wc -l`;
+    $stats->{acceptingLines} = `grep -a 'Accepting .* connections' $SquidLogsDirname/cache-*.log | wc -l`;
+    return $stats;
+}
+
+sub reconfigureSquid
+{
+    my ($options) = @_;
+    my $running = &squidIsRunning() or
+        die("cannot reconfigure a Squid instance that is not running");
+    my $pid = $running->[0];
+    my $signal = 'SIGHUP';
+
+    my $statsBefore = &reconfigurationLines();
+
+    kill('SIGZERO', $pid) == 1 or die("cannot signal Squid ($pid): $EXTENDED_OS_ERROR\n");
+    warn("reconfiguring Squid (PID: $pid; signal: $signal)...\n");
+    kill($signal, $pid) or return;
+
+    my $workerCount = &requiredOption($onameWorkerCount, $options);
+    my $diskerCount = &requiredOption($onameDiskerCount, $options);
+    my $coordinatorCount = ($workerCount + $diskerCount > 1) ? 1 : 0;
+    my $portCount = scalar expectedSquidListeningPorts($options);
+    my $reconfigurationsExpected = $workerCount + $diskerCount + $coordinatorCount;
+    my $listenersExpected = $workerCount * $portCount;
+
+    &waitFor("reconfigured Squid", sub {
+        my $statsAfter = &reconfigurationLines();
+
+        die("shrinking reconfiguringLines; stopped") if $statsBefore->{reconfiguringLines} > $statsAfter->{reconfiguringLines};
+        die("shrinking acceptingLines; stopped") if $statsBefore->{acceptingLines} > $statsAfter->{acceptingLines};
+        return 0 if $statsBefore->{reconfiguringLines} == $statsAfter->{reconfiguringLines};
+        return 0 if $statsBefore->{acceptingLines} == $statsAfter->{acceptingLines};
+
+        my $reconfiguringNow = $statsAfter->{reconfiguringLines} - $statsBefore->{reconfiguringLines};
+        die("too many reconfiguring now: $reconfiguringNow > $reconfigurationsExpected") if $reconfiguringNow > $reconfigurationsExpected;
+        return 0 if $reconfiguringNow < $reconfigurationsExpected;
+
+        my $acceptingNow = $statsAfter->{acceptingLines} - $statsBefore->{acceptingLines};
+        die("too many accepting now: $acceptingNow > $listenersExpected") if $acceptingNow > $listenersExpected;
+        return 0 if $acceptingNow < $listenersExpected;
+
+        return 1;
+    });
 }
 
 sub resetLogs
@@ -190,10 +301,40 @@ sub startSquid_
 {
     my @extraOptions = @_;
 
+    my $wrapper .= "valgrind
+        --verbose
+        --show-error-list=yes
+        --error-markers=ERROR_BEGIN_,ERROR_END_
+        --vgdb=no
+        --trace-children=yes
+        --child-silent-after-fork=no
+        --num-callers=50
+        --log-file=/usr/local/squid/var/logs/overlord/valgrind-%p.log
+        --time-stamp=yes
+        --leak-check=full
+        --leak-resolution=high
+        --show-reachable=no
+        --track-origins=no
+        --gen-suppressions=all
+        --suppressions=/usr/local/squid/etc/valgrind.supp
+    ";
+    $wrapper =~ s/\s+/ /gs; # convert repeated spaces/newlines into a single space
+
     my $cmd = "";
     # XXX: Cannot do that on Github Actions Ubuntu runner: Permission denied
     # $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
     $cmd .= "ulimit -n 10240; ";
+
+# XXX: make conditional on something
+# * This should probably be controlled (e.g., explicitly disabled) by tests
+#   because running under valgrind slows things down quite a bit.
+#
+# * This should probably be controlled by an "Is valgrind installed?" check
+#   (and disabled unless the test explicitly requires valgrind) because folks
+#   might need to tests environments without valgrind installed.
+#
+# $cmd .= $wrapper unless grep { $_ eq '-z' } @extraOptions;
+
     $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
@@ -274,14 +415,20 @@ sub squidIsRunning() {
     return [ $pid ];
 }
 
-sub squidIsListeningOnAllPorts() {
+sub expectedSquidListeningPorts() {
     my ($options) = @_;
+    die() unless $options;
 
     # We do not parse http_port lines because they may have ${process_number}
     # and/or may be affected by macros.
     my (@ports) = split(/\s*,\s*/, &requiredOption($onameListeningPorts, $options));
     die("cannot determine Squid listening ports") unless @ports;
+    return (@ports);
+}
 
+sub squidIsListeningOnAllPorts() {
+    my ($options) = @_;
+    my @ports = &expectedSquidListeningPorts($options);
     return &squidIsListeningOn(@ports);
 }
 
@@ -522,6 +669,13 @@ sub handleClient
         my %options = &parseOptions($header);
         &stopSquid(\%options);
         &startSquidInBackground(\%options);
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/reconfigure\s@s) {
+        my %options = &parseOptions($header);
+        &reconfigureSquid(\%options);
         &sendOkResponse($client);
         return;
     }
