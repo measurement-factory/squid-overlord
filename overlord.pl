@@ -22,6 +22,7 @@ use Data::Dumper;
 use HTTP::Tiny;
 use JSON::PP;
 
+use v5.10; # for state variables, at least
 
 my $MyListeningPort = 13128;
 my $SquidPrefix = "/usr/local/squid";
@@ -29,18 +30,20 @@ my $SquidPrefix = "/usr/local/squid";
 GetOptions(
     "port=i" => \$MyListeningPort,
     "prefix=s" => \$SquidPrefix,
-) or die("usage: $0 [--listen <port>] [--prefix <Squid installation prefix>]\n");
+) or die(&usage());
 
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
 my $SquidExeFilename = "$SquidPrefix/sbin/squid";
+my $SquidValgrindSuppressionsFilename = "$SquidPrefix/etc/valgrind.supp";
 my $SquidListeningPort = 3128;
 # maintained by us
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf";
 my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidOutFilename = "$SquidLogsDirname/squid.out";
+my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '10';
+my $SupportedPopVersion = '11';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -61,6 +64,10 @@ my %SignalsByShutdownManner = (
 my $OptStopDefault = 'immediately';
 die() unless exists $SignalsByShutdownManner{$OptStopDefault};
 
+# /reset and /restart option
+my $onameValgrindUse = 'valgrind-use';
+push @SupportedOptionNames, $onameValgrindUse;
+
 # /reset, /restart, and /reconfigure option
 my $onameWorkerCount = 'worker-count';
 push @SupportedOptionNames, $onameWorkerCount;
@@ -78,6 +85,18 @@ my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
+
+my $ValgrindIsPresent = &isValgrindPresent();
+
+sub usage
+{
+    return <<"USAGE";
+usage: $0 [option]...
+  supported options:
+  --listen <port>: Where to listed for POP commands from Daft [$MyListeningPort]
+  --prefix <Squid installation prefix>: Where to find installed Squid files [$SquidPrefix]
+USAGE
+}
 
 # computes kill() signal name based on request $options
 sub shutdownSignalFromOptions
@@ -158,8 +177,37 @@ sub extractValgrindErrors
     return (@records);
 }
 
+sub valgrindStarted() {
+    return 0 unless $ValgrindIsPresent;
+
+    # XXX: These logs may be from a very old test. We can ping logged valgrind
+    # kid process and then ignore old logs that are not backed by a process.
+    my @logs = glob "$SquidLogsDirname/valgrind*.log";
+    return @logs > 0;
+}
+
+sub allValgrindKidsExited() {
+    while (glob "$SquidLogsDirname/valgrind*.log") {
+        # TODO: Encapsulate this duplicated code.
+        my $logName = $_;
+        my $in = IO::File->new($logName, "r") or die("cannot read $logName: $!\n");
+        my @lines = $in->getlines();
+
+        next if grep { /\bFATAL:/ } @lines;
+        next if grep { /ERROR SUMMARY: \d/ } @lines;
+
+        # if this is not enough, we can also ping that valgrind kid process
+        warn("assume valgrind is still logging to $logName\n");
+        return 0;
+    }
+
+    return 1;
+}
+
 sub checkSquid
 {
+    my ($requireCompleteLogs) = @_;
+
     my $report = {};
 
     my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|FATAL|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
@@ -172,15 +220,27 @@ sub checkSquid
         my $in = IO::File->new($logName, "r") or die("cannot read $logName: $!\n");
         my @lines = $in->getlines();
 
-        if (my (@errorSummary) = grep { /ERROR SUMMARY: [^0]/ } @lines) {
-            warn("ERRORs in $_: $errorSummary[0]\n");
+        if (my (@valgrindFatals) = grep { /\bFATAL:/ } @lines) {
+            warn("FATALs in $_: $valgrindFatals[0]\n");
+            push @{$report->{problems}}, @valgrindFatals;
+        }
 
-            my (@valgrindErrors) = &extractValgrindErrors($logName, \@lines);
-            push @{$report->{problems}}, @valgrindErrors;
+        if (my (@errorSummaries) = grep { /ERROR SUMMARY: \d/ } @lines) {
+            if (my (@errorsInSummaries) = grep { /ERROR SUMMARY: [^0]/ } @errorSummaries) {
+                warn("ERRORs in $logName: $errorsInSummaries[0]\n");
+                my (@valgrindErrors) = &extractValgrindErrors($logName, \@lines);
+                push @{$report->{problems}}, @valgrindErrors;
+            }
+            # else: OK, no errors in ERROR SUMMARY lines
+        } elsif ($requireCompleteLogs) {
+            # If there is no summary logged, Valgrind probably did not have a
+            # chance to report memory leaks (if any).
+            warn("ERROR: No ERROR SUMMARY in $logName\n");
+            push @{$report->{problems}}, "$logName: Missing ERROR SUMMARY";
         }
     }
 
-
+    warn("health problems: ", scalar(@{$report->{problems}}), "\n");
     return $report;
 }
 
@@ -263,8 +323,9 @@ sub resetLogs
 
 sub resetCaches
 {
+    my ($options) = @_;
     &resetDir($SquidCachesDirname);
-    &runSquidInForeground('-z');
+    &runSquidInForeground($options, '-z');
     # Give tests new logs, without this past squid-z activity.
     &resetLogs();
 }
@@ -283,7 +344,7 @@ sub startSquidInBackground
 {
     my ($options) = @_;
 
-    &startSquid_();
+    &startSquid_($options);
     &waitFor("running Squid", \&squidIsRunning);
     &waitFor("listening Squid", sub { return &squidIsListeningOnAllPorts($options); });
     &waitFor("Squid with all kids registered", sub { return &squidHasAllKids($options); });
@@ -292,16 +353,22 @@ sub startSquidInBackground
 
 sub runSquidInForeground
 {
-    my @extraOptions = @_;
-    &startSquid_('--foreground', @extraOptions);
+    my ($options, @extraOptions) = @_;
+    &startSquid_($options, '--foreground', @extraOptions);
 }
 
-# common part for startSquidInBackground() and runSquidInForeground()
-sub startSquid_
+sub wrapperCommand_
 {
-    my @extraOptions = @_;
+    my ($options, @extraOptions) = @_;
 
-    my $wrapper .= "valgrind
+    return "" unless exists $options->{$onameValgrindUse} && $options->{$onameValgrindUse};
+    die("test requires valgrind use but this overlord environment lacks it") unless $ValgrindIsPresent;
+
+    # no valgrind for auto-generated squid -z step, even if valgrind is
+    # explicitly requested for primary squid execution
+    return "" if grep { $_ eq '-z' } @extraOptions;
+
+    my $wrapper = "valgrind
         --verbose
         --show-error-list=yes
         --error-markers=ERROR_BEGIN_,ERROR_END_
@@ -309,21 +376,31 @@ sub startSquid_
         --trace-children=yes
         --child-silent-after-fork=no
         --num-callers=50
-        --log-file=/usr/local/squid/var/logs/overlord/valgrind-%p.log
+        --log-file=$SquidPrefix/var/logs/overlord/valgrind-%p.log
         --time-stamp=yes
         --leak-check=full
         --leak-resolution=high
         --show-reachable=no
         --track-origins=no
         --gen-suppressions=all
-        --suppressions=/usr/local/squid/etc/valgrind.supp
+        --suppressions=$SquidValgrindSuppressionsFilename
     ";
     $wrapper =~ s/\s+/ /gs; # convert repeated spaces/newlines into a single space
+    return $wrapper;
+}
+
+
+# common part for startSquidInBackground() and runSquidInForeground()
+sub startSquid_
+{
+    my ($options, @extraOptions) = @_;
 
     my $cmd = "";
     # XXX: Cannot do that on Github Actions Ubuntu runner: Permission denied
     # $cmd .= "ulimit -c unlimited; "; # TODO: Detect and report core dumps.
     $cmd .= "ulimit -n 10240; ";
+
+    $cmd .= "touch $SquidStartFilename; ";
 
 # XXX: make conditional on something
 # * This should probably be controlled (e.g., explicitly disabled) by tests
@@ -333,16 +410,28 @@ sub startSquid_
 #   (and disabled unless the test explicitly requires valgrind) because folks
 #   might need to tests environments without valgrind installed.
 #
-# $cmd .= $wrapper unless grep { $_ eq '-z' } @extraOptions;
+    my $wrapperCommand = &wrapperCommand_($options, @extraOptions);
+    my $startTarget = $wrapperCommand ? "valgrind-wrapped Squid" : "Squid";
+    $cmd .= $wrapperCommand;
 
     $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
-    $cmd .= " > $SquidOutFilename 2>&1";
+    $cmd .= " > $SquidOutFilename 2>&1; ";
+
+    $cmd .= 'squid_exit_code=$?; ';
+    $cmd .= "rm -f $SquidStartFilename; ";
+    $cmd .= 'exit $squid_exit_code';
+
     warn("running: $cmd\n");
-    system($cmd) == 0 or die("cannot start Squid: $!\n".
-        &optionalContents($SquidOutFilename, 1));
+    system($cmd) == 0 or die("cannot start $startTarget: $!\n" . &cluesFromLogs());
+}
+
+sub cluesFromLogs
+{
+    my $report = &checkSquid();
+    return encode_json($report);
 }
 
 sub optionalContents
@@ -395,14 +484,18 @@ sub waitFor
 sub squidIsRunning() {
     my $pid = &squidPid();
 
-    # assume not running because there is no (PID in a stable) PID file
-    return undef() unless defined $pid;
+    if (!defined $pid) {
+        warn("assume Squid is not running because there is no (PID in a stable) PID file\n");
+        return undef();
+    }
 
     my $killed = kill('SIGZERO', $pid);
     $killed = -1 unless defined $killed;
 
-    # clearly running
-    return [ $pid ] if $killed == 1;
+    if ($killed == 1) {
+        warn("Squid ($pid) is definitely running\n");
+        return [ $pid ];
+    }
 
     if ($killed == 0 && $!{ESRCH}) {
         warn("assuming Squid ($pid) has died; removing its PID file");
@@ -466,7 +559,13 @@ sub squidPid
     if (!$in) {
         # ENOENT is a common case not worth warning about
         die("no OS support for ENOENT") unless exists $OS_ERROR{ENOENT};
-        warn("cannot open $SquidPidFilename: $!\n") unless $OS_ERROR{ENOENT};
+        if (!$OS_ERROR{ENOENT}) {
+            warn("cannot open $SquidPidFilename: $!\n");
+            return undef();
+        }
+
+        &waitFor("top process exit", sub { ! -e $SquidStartFilename });
+        &waitFor("valgrind kids exit", sub { &allValgrindKidsExited() }) if &valgrindStarted();
         return undef();
     }
 
@@ -594,6 +693,12 @@ sub getCacheManagerResponse
 
 sub getAccessRecords
 {
+    # 1: countMatchingActiveRequests() should see its own mgr:active_requests
+    # request; TODO: Should that function filter out its own request?
+    &waitFor("all past requests to complete", sub {
+        &countMatchingActiveRequests('.') <= 1 });
+
+    warn("getting access records from $SquidLogsDirname/\n");
     my $records = {};
     while (glob "$SquidLogsDirname/access*.log") {
         my $logName = $_;
@@ -642,6 +747,13 @@ sub handleClient
         die("unsupported Proxy Overlord Protocol version 1 in:\n$header\n");
     }
 
+    if ($header =~ m@^GET\s+\S*/executionEnvironment\s@s) {
+        # reply without checkSquid() because logs dir may still be dirty/stale
+        my $answer = { executionEnvironment => &executionEnvironment() };
+        my $body = { minimal => 1, answer => $answer };
+        return &sendOkResponse($client, $body);
+    }
+
     if ($header =~ m@^POST\s+\S*/reset\s@s &&
         $header =~ m@^Content-Length:\s*(\d+)@im) {
         my $length = $1;
@@ -661,7 +773,8 @@ sub handleClient
     if ($header =~ m@^GET\s+\S*/stop\s@s) {
         my %options = &parseOptions($header);
         &stopSquid(\%options);
-        &sendOkResponse($client);
+        my $body = { health => &checkSquid("stopped") };
+        &sendOkResponse($client, $body);
         return;
     }
 
@@ -681,8 +794,9 @@ sub handleClient
     }
 
     if ($header =~ m@^GET\s+\S*/getAccessRecords\s@s) {
-        my $records = &getAccessRecords();
-        &sendOkResponse($client, {accessRecords => $records});
+        my $answer = { accessRecords => &getAccessRecords() };
+        my $body = { health => &checkSquid(), answer => $answer };
+        &sendOkResponse($client, $body);
         return;
     }
 
@@ -724,10 +838,12 @@ sub writeError
 
 sub sendOkResponse
 {
-    my ($client, $answer) = @_;
-    my $body = {};
-    $body->{health} = &checkSquid();
-    $body->{answer} = $answer if defined $answer;
+    my ($client, $body) = @_;
+    if (!$body) {
+        $body = {};
+        $body->{health} = &checkSquid();
+        # no $body->{answer} by default
+    }
     return &sendResponse($client, "200 OK", encode_json($body));
 }
 
@@ -782,6 +898,50 @@ sub spawn
     warn("child $$ started\n");
     exit($code->());
 }
+
+sub isValgrindPresent
+{
+    if (defined $SquidValgrindSuppressionsFilename && ! -e $SquidValgrindSuppressionsFilename) {
+        warn("Valgrind suppression file for Squid not found at $SquidValgrindSuppressionsFilename");
+        return 0;
+    }
+
+    if (system("valgrind --version") != 0) {
+        warn("Cannot start valgrind");
+        return 0;
+    }
+
+    # TODO: Check whether Squid was built with valgrind support.
+    warn("Valgrind suppression file: $SquidValgrindSuppressionsFilename\n");
+    return 1;
+}
+
+sub executionEnvironment
+{
+    my $ee = {};
+    $ee->{'valgrindIsPresent'} = $ValgrindIsPresent;
+    warn("Summarized execution environment: " . Dumper($ee));
+    return $ee;
+}
+
+sub myWarn
+{
+    my ($message) = @_;
+
+    my $now = time();
+
+    state $lastMessageTime = $now;
+
+    my $diff = $now - $lastMessageTime;
+    use POSIX qw(strftime);
+    # XXX: "Z" suffix stands for UTC, but gmtime() returns GMT, not UTC.
+    # How to get UTC using Perl Core modules only?
+    my $nowStr = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime($now));
+    printf(STDERR "%s +%ds| %-6d | %s", $nowStr, $diff, $$, $message);
+    $lastMessageTime = $now;
+}
+
+$SIG{'__WARN__'} = \&myWarn;
 
 chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
 
