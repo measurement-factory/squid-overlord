@@ -26,16 +26,18 @@ use v5.10; # for state variables, at least
 
 my $MyListeningPort = 13128;
 my $SquidPrefix = "/usr/local/squid";
+my $SquidValgrindSuppressionsFilename;
 
 GetOptions(
     "port=i" => \$MyListeningPort,
     "prefix=s" => \$SquidPrefix,
+    "valgrind-suppressions=s" => \$SquidValgrindSuppressionsFilename,
 ) or die(&usage());
 
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
 my $SquidExeFilename = "$SquidPrefix/sbin/squid";
-my $SquidValgrindSuppressionsFilename = "$SquidPrefix/etc/valgrind.supp";
 my $SquidListeningPort = 3128;
+
 # maintained by us
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf";
 my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
@@ -95,6 +97,7 @@ usage: $0 [option]...
   supported options:
   --listen <port>: Where to listed for POP commands from Daft [$MyListeningPort]
   --prefix <Squid installation prefix>: Where to find installed Squid files [$SquidPrefix]
+  --valgrind-suppressions: Enable memory leak tests with Valgrind, using the given Valgrind suppressions file for Squid [disabled]
 USAGE
 }
 
@@ -910,14 +913,17 @@ sub spawn
 
 sub isValgrindPresent
 {
-    if (defined $SquidValgrindSuppressionsFilename && ! -e $SquidValgrindSuppressionsFilename) {
-        warn("Valgrind suppression file for Squid not found at $SquidValgrindSuppressionsFilename");
+    if (!defined $SquidValgrindSuppressionsFilename) {
+        warn("Disabling optional memory leak testing for the lack of --valgrind-suppressions");
         return 0;
     }
 
+    if (! -e $SquidValgrindSuppressionsFilename) {
+        die("Valgrind suppression file for Squid not found at $SquidValgrindSuppressionsFilename");
+    }
+
     if (system("valgrind --version") != 0) {
-        warn("Cannot start valgrind");
-        return 0;
+        die("Cannot start valgrind");
     }
 
     # TODO: Check whether Squid was built with valgrind support.
