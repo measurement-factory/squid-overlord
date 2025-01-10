@@ -40,7 +40,7 @@ my $SquidListeningPort = 3128;
 my $SquidConfigFilename = "$SquidPrefix/etc/squid-overlord.conf";
 my $SquidLogsDirname = "$SquidPrefix/var/logs/overlord";
 my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
-my $SquidOutFilename = "$SquidLogsDirname/squid.out";
+my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
 my $SupportedPopVersion = '11';
@@ -418,7 +418,7 @@ sub startSquid_
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
-    $cmd .= " > $SquidOutFilename 2>&1; ";
+    $cmd .= " > $SquidConsoleLogFilename 2>&1; ";
 
     $cmd .= 'squid_exit_code=$?; ';
     $cmd .= "rm -f $SquidStartFilename; ";
