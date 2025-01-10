@@ -464,8 +464,17 @@ sub resetDir
     # Two backup levels are maintained, one for old logs, and one for -z logs.
     &backupFile("$dirname.1", "$dirname.2");
     &backupFile("$dirname", "$dirname.1");
+
     mkdir($dirname)
         or die("cannot create $dirname directory: $!");
+
+    if (!$EFFECTIVE_USER_ID) {
+        my $parent = dirname($dirname);
+        my $cmd = "chown --reference $parent $dirname";
+        system($cmd) == 0 or die("cannot set ownership of the parent directory: $!\n" .
+            "command: $cmd\n" .
+            "stopped");
+    }
 }
 
 sub waitFor
