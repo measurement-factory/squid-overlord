@@ -24,12 +24,12 @@ use JSON::PP;
 
 use v5.10; # for state variables, at least
 
-my $MyListeningPort = 13128;
+my $MyListeningAddress = 'localhost:13128';
 my $SquidPrefix = "/usr/local/squid";
 my $SquidValgrindSuppressionsFilename;
 
 GetOptions(
-    "port=i" => \$MyListeningPort,
+    "listen-at=s" => \$MyListeningAddress,
     "prefix=s" => \$SquidPrefix,
     "valgrind-suppressions=s" => \$SquidValgrindSuppressionsFilename,
 ) or die(&usage());
@@ -95,7 +95,7 @@ sub usage
     return <<"USAGE";
 usage: $0 [option]...
   supported options:
-  --listen <port>: Where to listed for POP commands from Daft [$MyListeningPort]
+  --listen-at <host:port>: Where to listen for POP commands from Daft [$MyListeningAddress]
   --prefix <Squid installation prefix>: Where to find installed Squid files [$SquidPrefix]
   --valgrind-suppressions: Enable memory leak tests with Valgrind, using the given Valgrind suppressions file for Squid [disabled]
 USAGE
@@ -961,12 +961,12 @@ $SIG{'__WARN__'} = \&myWarn;
 chdir($SquidPrefix) or die("Cannot set working directory to $SquidPrefix: $!\n");
 
 my $server = IO::Socket::INET->new(
-    LocalPort => $MyListeningPort,
+    LocalAddr => $MyListeningAddress,
     Type      => SOCK_STREAM,
     Reuse     => 1,
     Listen    => 10, # SOMAXCONN
-) or die("Cannot listen on on TCP port $MyListeningPort: $@\n");
-warn("Overlord v$SupportedPopVersion listens on port $MyListeningPort\n");
+) or die("Cannot listen for TCP connections at $MyListeningAddress: $@\n");
+warn("Overlord v$SupportedPopVersion listens at $MyListeningAddress\n");
 
 if (&squidIsRunning()) {
     warn("Squid listens on port $SquidListeningPort: ",
