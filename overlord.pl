@@ -273,8 +273,13 @@ sub shutdownSquid
 sub reconfigurationLines
 {
     my $stats = {};
-    $stats->{reconfiguringLines} = `grep -aF 'Reconfiguring Squid Cache' $SquidLogsDirname/cache-*.log | wc -l`;
-    $stats->{acceptingLines} = `grep -a 'Accepting .* connections' $SquidLogsDirname/cache-*.log | wc -l`;
+    $stats->{reconfiguringHarshlyLines} = int(`grep -aF 'Reconfiguring Squid Cache' $SquidLogsDirname/cache-*.log | wc -l`);
+    $stats->{reconfiguringSmoothlyLines} = int(`grep -aF 'Performing smooth reconfiguration' $SquidLogsDirname/cache-*.log | wc -l`);
+    $stats->{acceptingLines} = int(`grep -a 'Accepting .* connections' $SquidLogsDirname/cache-*.log | wc -l`);
+
+    warn("reconfiguringHarshlyLines=$stats->{reconfiguringHarshlyLines} ".
+        "reconfiguringSmoothlyLines=$stats->{reconfiguringSmoothlyLines} ".
+        "acceptingLines=$stats->{acceptingLines}\n");
     return $stats;
 }
 
@@ -302,20 +307,33 @@ sub reconfigureSquid
     &waitFor("reconfigured Squid", sub {
         my $statsAfter = &reconfigurationLines();
 
-        die("shrinking reconfiguringLines; stopped") if $statsBefore->{reconfiguringLines} > $statsAfter->{reconfiguringLines};
-        die("shrinking acceptingLines; stopped") if $statsBefore->{acceptingLines} > $statsAfter->{acceptingLines};
-        return 0 if $statsBefore->{reconfiguringLines} == $statsAfter->{reconfiguringLines};
-        return 0 if $statsBefore->{acceptingLines} == $statsAfter->{acceptingLines};
+        my $reconfiguredHarshly = $statsAfter->{reconfiguringHarshlyLines} - $statsBefore->{reconfiguringHarshlyLines};
+        die("bad harsh reconfiguration change: $reconfiguredHarshly vs. $reconfigurationsExpected") if
+           $reconfiguredHarshly < 0 || $reconfiguredHarshly > $reconfigurationsExpected;
 
-        my $reconfiguringNow = $statsAfter->{reconfiguringLines} - $statsBefore->{reconfiguringLines};
-        die("too many reconfiguring now: $reconfiguringNow > $reconfigurationsExpected") if $reconfiguringNow > $reconfigurationsExpected;
-        return 0 if $reconfiguringNow < $reconfigurationsExpected;
+        my $reconfiguredSmoothly = $statsAfter->{reconfiguringSmoothlyLines} - $statsBefore->{reconfiguringSmoothlyLines};
+        die("bad harsh reconfiguration change: $reconfiguredSmoothly vs. $reconfigurationsExpected") if
+           $reconfiguredSmoothly < 0 || $reconfiguredSmoothly > $reconfigurationsExpected;
 
-        my $acceptingNow = $statsAfter->{acceptingLines} - $statsBefore->{acceptingLines};
-        die("too many accepting now: $acceptingNow > $listenersExpected") if $acceptingNow > $listenersExpected;
-        return 0 if $acceptingNow < $listenersExpected;
+        die("unsupported mixture of smooth and harsh reconfiguration lines: $reconfiguredHarshly") if
+           $reconfiguredHarshly && $reconfiguredSmoothly;
 
-        return 1;
+        return 0 if ($reconfiguredHarshly + $reconfiguredSmoothly) < $reconfigurationsExpected;
+        die() unless $reconfiguredHarshly || $reconfiguredSmoothly;
+
+        # we detected as many reconfiguration lines as we wanted; now handle accepting lines
+
+        my $startedToAccept = $statsAfter->{acceptingLines} - $statsBefore->{acceptingLines};
+        die("bad acceptingLines change: $startedToAccept vs. $listenersExpected") if
+            $startedToAccept < 0 || $startedToAccept > $listenersExpected;
+
+        if ($reconfiguredHarshly) {
+            return $startedToAccept == $listenersExpected;
+        } else {
+            die("unexpected acceptingLines change during smooth reconfiguration: $startedToAccept") unless $startedToAccept == 0;
+            die() unless $reconfiguredSmoothly;
+            return 1;
+        }
     });
 }
 
