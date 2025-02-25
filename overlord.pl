@@ -45,7 +45,7 @@ my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '11';
+my $SupportedPopVersion = '12';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -818,6 +818,19 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/reconfigure\s@s) {
         my %options = &parseOptions($header);
+        &reconfigureSquid(\%options);
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^POST\s+\S*/reconfigure\s@s &&
+        $header =~ m@^Content-Length:\s*(\d+)@im) {
+        # TODO: Avoid code duplication by doing something like this for all requests.
+        my $length = $1;
+        my %options = &parseOptions($header);
+        $options{config_} = &receiveBody($client, $length);
+        &writeSquidConfiguration($options{config_});
+
         &reconfigureSquid(\%options);
         &sendOkResponse($client);
         return;
