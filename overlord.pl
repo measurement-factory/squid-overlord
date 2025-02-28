@@ -118,10 +118,10 @@ sub shutdownSignalFromOptions
 sub resetSquid
 {
     my ($options) = @_;
-    my $config = $options->{config_};
-    warn("Resetting Squid\n");
-    # warn("Resetting to:\n$config\n");
 
+    warn("Resetting Squid\n");
+
+    my $config = &getReceivedSquidConfiguration($options);
     &stopSquid($options) if &squidIsRunning();
 
     &writeSquidConfiguration($config);
@@ -293,6 +293,12 @@ sub reconfigureSquid
 
     my $statsBefore = &reconfigurationLines();
 
+    # This simple hack does not support some complex configuration cases. If
+    # that becomes a problem, we may have to add/use a POP signal instead.
+    my $config = &getReceivedOrStoredSquidConfiguration($options);
+    my $requireSmoothReconfiguration = $config =~ /^\s*reconfiguration\s+smooth\b/m;
+    my $requireHarshReconfiguration = $config =~ /^\s*reconfiguration\s+harsh\b/m || $config !~ /^\s*reconfiguration\s/m;
+
     kill('SIGZERO', $pid) == 1 or die("cannot signal Squid ($pid): $EXTENDED_OS_ERROR\n");
     warn("reconfiguring Squid (PID: $pid; signal: $signal)...\n");
     kill($signal, $pid) or return;
@@ -318,7 +324,19 @@ sub reconfigureSquid
         die("unsupported mixture of smooth and harsh reconfiguration lines: $reconfiguredHarshly") if
            $reconfiguredHarshly && $reconfiguredSmoothly;
 
-        return 0 if ($reconfiguredHarshly + $reconfiguredSmoothly) < $reconfigurationsExpected;
+        # TODO: Perhaps these "unwanted reconfiguration" checks belong to
+        # Daft, and we should just report the discovered mode to Daft instead?
+        die("unwanted harsh reconfiguration(s)") if
+            $reconfiguredHarshly && $requireSmoothReconfiguration;
+
+        die("unwanted smooth reconfiguration(s)") if
+            $reconfiguredSmoothly && $requireHarshReconfiguration;
+
+        if ($reconfiguredHarshly + $reconfiguredSmoothly < $reconfigurationsExpected) {
+            warn("waiting for more reconfiguration lines: $reconfiguredHarshly + $reconfiguredSmoothly < $reconfigurationsExpected\n");
+            return 0;
+        }
+
         die() unless $reconfiguredHarshly || $reconfiguredSmoothly;
 
         # we detected as many reconfiguration lines as we wanted; now handle accepting lines
@@ -349,6 +367,43 @@ sub resetCaches
     &runSquidInForeground($options, '-z');
     # Give tests new logs, without this past squid-z activity.
     &resetLogs();
+}
+
+# Contents of squid.conf received in a POP command that must supply it.
+# See also: getReceivedOrStoredSquidConfiguration().
+sub getReceivedSquidConfiguration
+{
+    my ($options) = @_;
+    die() unless $options;
+    die("BUG: Missing required configuration in a POP command") unless exists $options->{config_};
+    die("missing required configuration") unless defined $options->{config_};
+    return $options->{config_};
+}
+
+# Contents of squid.conf loaded from a well-known file that must exist.
+# See also: getReceivedOrStoredSquidConfiguration().
+sub getStoredSquidConfiguration
+{
+    my ($options) = @_;
+    die() unless $options;
+    die("BUG: Conflicting configuration sources") if exists $options->{config_} && defined $options->{config_};
+
+    my $in = IO::File->new($SquidConfigFilename, "r") or die("cannot open $SquidConfigFilename: $!\n");
+    my @lines = $in->getlines();
+    die("cannot read $SquidConfigFilename: $!\n") if $in->error;
+    my $config = join("", @lines);
+    warn("loaded " . (length $config) . " bytes from $SquidConfigFilename");
+    return $config;
+}
+
+# Contents of squid.conf received in a POP command (if that command supplied
+# it) or loaded from a well-known file (otherwise).
+sub getReceivedOrStoredSquidConfiguration
+{
+    my ($options) = @_;
+    die() unless $options;
+    return &getReceivedSquidConfiguration($options) if exists $options->{config_} && defined $options->{config_};
+    return &getStoredSquidConfiguration($options);
 }
 
 sub writeSquidConfiguration
@@ -818,6 +873,7 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/reconfigure\s@s) {
         my %options = &parseOptions($header);
+        # no $options{config_} handling here; see "POST /reconfigure" below
         &reconfigureSquid(\%options);
         &sendOkResponse($client);
         return;
