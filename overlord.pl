@@ -318,7 +318,7 @@ sub reconfigureSquid
            $reconfiguredHarshly < 0 || $reconfiguredHarshly > $reconfigurationsExpected;
 
         my $reconfiguredSmoothly = $statsAfter->{reconfiguringSmoothlyLines} - $statsBefore->{reconfiguringSmoothlyLines};
-        die("bad harsh reconfiguration change: $reconfiguredSmoothly vs. $reconfigurationsExpected") if
+        die("bad smooth reconfiguration change: $reconfiguredSmoothly vs. $reconfigurationsExpected") if
            $reconfiguredSmoothly < 0 || $reconfiguredSmoothly > $reconfigurationsExpected;
 
         die("unsupported mixture of smooth and harsh reconfiguration lines: $reconfiguredHarshly") if
