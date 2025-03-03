@@ -207,13 +207,22 @@ sub allValgrindKidsExited() {
     return 1;
 }
 
+sub extractCacheLogErrors
+{
+    my ($filenamePattern) = @_;
+    return '' unless glob($filenamePattern); # avoid "grep: cache-*.log: No such file" errors
+    return `grep -E -a -m10 '^[0-9./: ]+( kid[0-9]+)?[|] (WARNING|ERROR|FATAL|assertion)' $filenamePattern 2>&1`;
+}
+
 sub checkSquid
 {
     my ($requireCompleteLogs) = @_;
 
     my $report = {};
 
-    my $problems = `egrep -am10 '^[0-9./: ]+ kid[0-9]+[|] (WARNING|ERROR|FATAL|assertion)' $SquidLogsDirname/cache-*.log 2>&1`;
+    my $problems =
+        &extractCacheLogErrors($SquidConsoleLogFilename) .
+        &extractCacheLogErrors("$SquidLogsDirname/cache-*.log");
     # split into individual problems, removing the trailing LF from each problem
     $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
 
