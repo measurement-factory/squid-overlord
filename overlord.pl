@@ -215,7 +215,12 @@ sub extractCacheLogErrors
     my @logs = glob($filenamePattern);
     return '' unless @logs;
 
-    return `grep -E -a -m10 '^[0-9./: ]+( kid[0-9]+)?[|] (WARNING|ERROR|FATAL|assertion)' $filenamePattern 2>&1`;
+    # Accommodate odd prefixes in messages like "SECURITY ERROR" and "UPGRADE
+    # WARNING". Skip debugging messages by matching at most one extra "word".
+    # Debugging messages use a thee-word prefix containing debugging
+    # section/level, source code location, and function name.
+    my $prefix = '( [^ ]+)?';
+    return `grep -E -a -m10 '^[0-9./: ]+( kid[0-9]+)?[|]$prefix (WARNING|ERROR|FATAL|assertion)' $filenamePattern 2>&1`;
 }
 
 sub checkSquid
