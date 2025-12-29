@@ -45,7 +45,7 @@ my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '12';
+my $SupportedPopVersion = '13';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -85,6 +85,10 @@ push @SupportedOptionNames, $onameRequestPath;
 # /waitActiveRequests option
 my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
+
+# /signals option
+my $onameSignalList = 'signal-list';
+push @SupportedOptionNames, $onameSignalList;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -371,6 +375,40 @@ sub reconfigureSquid
             return 1;
         }
     });
+}
+
+sub signalSquid
+{
+    my ($options) = @_;
+    my $signalListRaw = &requiredOption($onameSignalList, $options);
+
+    my $running = &squidIsRunning() or
+        die("cannot signal a Squid instance that is not running");
+
+    my $statsBefore = &reconfigurationLines();
+
+    my $pid = $running->[0];
+    my @signalList = split /\s*,\s*/, $signalListRaw;
+    foreach my $sig (@signalList) {
+        kill($sig, $pid) or return;
+    }
+
+    my $signalNumber = @signalList;
+    &waitFor("Squid processed $signalListRaw signals", sub {
+        sleep($signalNumber*1); # estimated signal processing time: 1 second per signal
+    });
+
+    my $doShutdown = grep { $_ eq 'INT' } @signalList;
+    if ($doShutdown) {
+        &waitFor("no running Squid", sub { ! &squidIsRunning() });
+    }
+
+    my $statsAfter = &reconfigurationLines();
+    my $resultStats = {};
+    $resultStats->{reconfiguringHarshlyLines} = $statsAfter->{reconfiguringHarshlyLines} - $statsBefore->{reconfiguringHarshlyLines};
+    $resultStats->{reconfiguringSmoothlyLines} = $statsAfter->{reconfiguringSmoothlyLines} - $statsBefore->{reconfiguringSmoothlyLines};
+    $resultStats->{acceptingLines} = $statsAfter->{acceptingLines} - $statsBefore->{acceptingLines};
+    return $resultStats;
 }
 
 sub resetLogs
@@ -894,6 +932,14 @@ sub handleClient
         # no $options{config_} handling here; see "POST /reconfigure" below
         &reconfigureSquid(\%options);
         &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/signals\s@s) {
+        my %options = &parseOptions($header);
+        my $answer = { stats => &signalSquid(\%options) };
+        my $body = { health => &checkSquid(), answer => $answer };
+        &sendOkResponse($client, $body);
         return;
     }
 
