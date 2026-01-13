@@ -377,6 +377,26 @@ sub reconfigureSquid
     });
 }
 
+sub signalLines
+{
+    my $stats = {};
+    my @doReconfigureLines = `grep -aE "reconfiguration signals:[0-9]+\$" $SquidLogsDirname/cache-*0.log`;
+    my @doShutdownLines = `grep -aE "shutdown signals:[0-9]+\$" $SquidLogsDirname/cache-*0.log`;
+    $stats->{reconfigureSignals} = 0;
+    foreach my $line (@doReconfigureLines) {
+        if ($line =~ /(\d+)$/) {
+            $stats->{reconfigureSignals} += $1;
+        }
+    }
+    $stats->{shutdownSignals} = 0;
+    foreach my $line (@doReconfigureLines) {
+        if ($line =~ /(\d+)$/) {
+            $stats->{shutdownSignals} += $1;
+        }
+    }
+    return $stats;
+}
+
 sub signalSquid
 {
     my ($options) = @_;
@@ -386,16 +406,27 @@ sub signalSquid
         die("cannot signal a Squid instance that is not running");
 
     my $statsBefore = &reconfigurationLines();
+    my $signalStatsBefore = &signalLines();
 
     my $pid = $running->[0];
     my @signalList = split /\s*,\s*/, $signalListRaw;
+    my $count = scalar @signalList;
     foreach my $sig (@signalList) {
+        warn("will send $sig signal to $pid\n");
         kill($sig, $pid) or return;
     }
 
     my $signalNumber = @signalList;
     &waitFor("Squid processed $signalListRaw signals", sub {
-        sleep($signalNumber*1); # estimated signal processing time: 1 second per signal
+        my $signalStatsAfter = &signalLines();
+        my $reconfigureSignals = $signalStatsAfter->{reconfigureSignals} - $signalStatsBefore->{reconfigureSignals};
+        my $shutdownSignals = $signalStatsAfter->{reconfigureSignals} - $signalStatsBefore->{reconfigureSignals};
+        my $processed = $reconfigureSignals+$shutdownSignals;
+        if ($processed < $count) {
+            warn("Still waiting for $count signals to be processed. Processed $processed so far\n");
+            return 0;
+        }
+        return 1;
     });
 
     my $doShutdown = grep { $_ eq 'INT' } @signalList;
