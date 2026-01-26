@@ -21,6 +21,7 @@ use File::Basename;
 use Data::Dumper;
 use HTTP::Tiny;
 use JSON::PP;
+use Time::HiRes qw(sleep);
 
 use v5.10; # for state variables, at least
 
@@ -45,7 +46,7 @@ my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '12';
+my $SupportedPopVersion = '13';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -85,6 +86,10 @@ push @SupportedOptionNames, $onameRequestPath;
 # /waitActiveRequests option
 my $onameActiveRequestsCount = 'active-requests-count';
 push @SupportedOptionNames, $onameActiveRequestsCount;
+
+# /signals option
+my $onameSignalList = 'signal-list';
+push @SupportedOptionNames, $onameSignalList;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
@@ -371,6 +376,101 @@ sub reconfigureSquid
             return 1;
         }
     });
+}
+
+sub signalLines
+{
+    my $workersExpected = shift;
+    my $stats = {};
+
+    my @masterReceivedSignalLines = `grep -aE "got.+signals: [1-9]+\$" $SquidLogsDirname/cache-*0.log`;
+    my @workerReceivedSignalLines = `grep -aE "got.+signals: [1-9]+\$" $SquidLogsDirname/cache-*[1-$workersExpected].log`;
+    $stats->{workerCompletedReconfigurationLines} = int(`grep -aE "reconfiguration completed" $SquidLogsDirname/cache-*[1-$workersExpected].log | wc -l`);
+
+    # TODO: fix code duplication
+    $stats->{masterReceivedSignals} = 0;
+    foreach my $line (@masterReceivedSignalLines) {
+        $line =~ /got.+signals: (\d+)/ or die "Cannot extract signal number";
+        $stats->{masterReceivedSignals} += $1;
+    }
+
+    $stats->{workerReceivedSignals} = 0;
+    foreach my $line (@workerReceivedSignalLines) {
+        $line =~ /got.+signals: (\d+)/ or die "Cannot extract signal number";
+        $stats->{workerReceivedSignals} += $1;
+    }
+    return $stats;
+}
+
+sub signalSquid
+{
+    my ($options) = @_;
+    my $signalListRaw = &requiredOption($onameSignalList, $options);
+
+    my $running = &squidIsRunning() or
+        die("cannot signal a Squid instance that is not running");
+
+    my $workersExpected = &requiredOption($onameWorkerCount, $options);
+    my $statsBefore = &reconfigurationLines();
+    my $signalStatsBefore = &signalLines($workersExpected);
+
+    my $pid = $running->[0];
+    my @signalList = split /\s*,\s*/, $signalListRaw;
+    my $count = (scalar @signalList)*$workersExpected;
+    my $reconfigurationExpected = 0;
+    my $shutdownExpected = 0;
+    my $workerSignalsExpected = 0;
+    foreach my $sig (@signalList) {
+        if ($sig eq "INT") {
+            $shutdownExpected = 1;
+            $workerSignalsExpected++;
+        } else {
+            $sig eq "HUP" or die("expect either INT or HUP signal but got $sig");
+            if ($shutdownExpected == 0 ) {
+                $workerSignalsExpected++;
+                $reconfigurationExpected = 1;
+            }
+        }
+        warn("will send $sig signal to $pid\n");
+        # We need this delay to ensure that Squid receives all sent signals.
+        # Without the delay, the OS may ignore some of the sent signals if
+        # the receiver process' signal handler is still active.
+        # TODO: probably there is no guarantee that this delay is enough.
+        # Rework to make this delay dynamic to restart the test if there have been
+        # signal delivery problems.
+        sleep(0.02);
+        kill($sig, $pid) or return;
+    }
+
+    my $signalNumber = @signalList;
+    &waitFor("Squid processed $signalListRaw signals", sub {
+        my $signalStatsAfter = &signalLines($workersExpected);
+        my $workerCompletedReconfigurationLines = $signalStatsAfter->{workerCompletedReconfigurationLines} - $signalStatsBefore->{workerCompletedReconfigurationLines};
+        my $workerReceivedSignals = $signalStatsAfter->{workerReceivedSignals} - $signalStatsBefore->{workerReceivedSignals};
+        my $masterReceivedSignals = $signalStatsAfter->{masterReceivedSignals} - $signalStatsBefore->{masterReceivedSignals};
+
+        if ($workerCompletedReconfigurationLines < $reconfigurationExpected) {
+            warn("Still waiting for worker reconfiguration finishing\n");
+            return 0;
+        }
+        my $allWorkerSignals = $workerSignalsExpected * $workersExpected;
+        if ($workerReceivedSignals < $allWorkerSignals) {
+            warn("Still waiting for some worker to get a signal, got $allWorkerSignals signals so far\n");
+            return 0;
+        }
+        return 1;
+    });
+
+    if ($shutdownExpected) {
+        &waitFor("no running Squid", sub { ! &squidIsRunning() });
+    }
+
+    my $statsAfter = &reconfigurationLines();
+    my $resultStats = {};
+    $resultStats->{reconfiguringHarshlyLines} = $statsAfter->{reconfiguringHarshlyLines} - $statsBefore->{reconfiguringHarshlyLines};
+    $resultStats->{reconfiguringSmoothlyLines} = $statsAfter->{reconfiguringSmoothlyLines} - $statsBefore->{reconfiguringSmoothlyLines};
+    $resultStats->{acceptingLines} = $statsAfter->{acceptingLines} - $statsBefore->{acceptingLines};
+    return $resultStats;
 }
 
 sub resetLogs
@@ -894,6 +994,14 @@ sub handleClient
         # no $options{config_} handling here; see "POST /reconfigure" below
         &reconfigureSquid(\%options);
         &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/signals\s@s) {
+        my %options = &parseOptions($header);
+        my $answer = { stats => &signalSquid(\%options) };
+        my $body = { health => &checkSquid(), answer => $answer };
+        &sendOkResponse($client, $body);
         return;
     }
 
