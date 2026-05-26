@@ -16,6 +16,7 @@ use Getopt::Long;
 use strict;
 use warnings;
 use English;
+use Carp;
 use File::Basename;
 # These are in Perl Core since Perl v5.14 (or earlier; see corelist -v 5.14.0)
 use Data::Dumper;
@@ -660,7 +661,7 @@ sub squidIsListeningOn() {
 sub requiredOption() {
     my ($oname, $options) = @_;
     my $result = $options->{$oname};
-    die("missing $oname in ", join(",", keys %{$options})) unless defined $result;
+    carp("missing $oname in ", join(",", keys %{$options})) unless defined $result;
     return $result;
 }
 
