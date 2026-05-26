@@ -1085,6 +1085,9 @@ my $server = IO::Socket::INET->new(
 ) or die("Cannot listen for TCP connections at $MyListeningAddress: $@\n");
 warn("Overlord v$SupportedPopVersion listens at $MyListeningAddress\n");
 
+# XXX: This (essentially optional) check is executed outside the &spawn()ed
+# process timeout handler and, hence, may get stuck forever if, for example,
+# there is a $SquidStartFilename file left over from our previous killed run.
 if (&squidIsRunning()) {
     warn("Squid listens on port $SquidListeningPort: ",
         (&squidIsListeningOn($SquidListeningPort) ? "yes" : "no"),
