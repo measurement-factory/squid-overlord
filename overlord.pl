@@ -88,6 +88,9 @@ push @SupportedOptionNames, $onameActiveRequestsCount;
 
 my %SupportedOptionNameIndex = map { $_ => 1 } @SupportedOptionNames;
 
+# other reused strings
+my $strForeground = '--foreground';
+
 my $ValgrindIsPresent = &isValgrindPresent();
 
 sub usage
@@ -128,7 +131,7 @@ sub resetSquid
     # Ensure log directory existence
     # and avoid polluting old logs with the upcoming squid-z activity.
     &resetLogs();
-    &resetCaches() if $config =~ /cache_dir/; # needs writeSquidConfiguration()
+    &resetCaches($options) if $config =~ /cache_dir/; # needs writeSquidConfiguration()
 
     &startSquidInBackground($options);
 }
@@ -448,7 +451,7 @@ sub startSquidInBackground
 sub runSquidInForeground
 {
     my ($options, @extraOptions) = @_;
-    &startSquid_($options, '--foreground', @extraOptions);
+    &startSquid_($options, $strForeground, @extraOptions);
 }
 
 sub wrapperCommand_
@@ -512,7 +515,15 @@ sub startSquid_
     $cmd .= " -C "; # prefer "raw" errors
     $cmd .= " -f $SquidConfigFilename";
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
-    $cmd .= " > $SquidConsoleLogFilename 2>&1; ";
+    $cmd .= " > $SquidConsoleLogFilename 2>&1";
+
+    # no-daemon mode disables backgrounding, so we fake the latter when needed
+    my $workersExpected = &requiredOption($onameWorkerCount, $options);
+    if ($workersExpected || grep($strForeground, @extraOptions)) {
+        $cmd .= "; ";
+    } else {
+        $cmd .= " & "; # terminates command and, hence, not compatible with ';'
+    }
 
     $cmd .= 'squid_exit_code=$?; ';
     $cmd .= "rm -f $SquidStartFilename; ";
