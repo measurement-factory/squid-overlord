@@ -28,11 +28,13 @@ use v5.10; # for state variables, at least
 my $MyListeningAddress = 'localhost:13128';
 my $SquidPrefix = "/usr/local/squid";
 my $SquidValgrindSuppressionsFilename;
+my $RunInForeground = (-t STDOUT);
 
 GetOptions(
     "listen-at=s" => \$MyListeningAddress,
     "prefix=s" => \$SquidPrefix,
     "valgrind-suppressions=s" => \$SquidValgrindSuppressionsFilename,
+    "foreground" => \$RunInForeground,
 ) or die(&usage());
 
 my $SquidPidFilename = "$SquidPrefix/var/run/squid.pid";
@@ -99,6 +101,7 @@ sub usage
     return <<"USAGE";
 usage: $0 [option]...
   supported options:
+  --foreground: Do _not_ go into background after startup activities (e.g., opening a socket to listen for POP commands and probing Squid) [enabled when output goes to the terminal]
   --listen-at <host:port>: Where to listen for POP commands from Daft [$MyListeningAddress]
   --prefix <Squid installation prefix>: Where to find installed Squid files [$SquidPrefix]
   --valgrind-suppressions: Enable memory leak tests with Valgrind, using the given Valgrind suppressions file for Squid [disabled]
@@ -1095,6 +1098,16 @@ if (&squidIsRunning()) {
 }
 
 $SIG{'CHLD'} = \&reaper;
+
+if (!$RunInForeground) {
+    my $pid = fork();
+    die("cannot fork: $!") unless defined($pid);
+    if ($pid) {
+        exit(0);
+    }
+    # child
+    warn("running in the background\n");
+}
 
 while (1) {
     my $client = $server->accept() or do {
