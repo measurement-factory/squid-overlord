@@ -571,6 +571,13 @@ sub resetDir
     my ($dirname) = @_;
 
     # Two backup levels are maintained, one for old logs, and one for -z logs.
+    &backupFile("$dirname.8", "$dirname.9");
+    &backupFile("$dirname.7", "$dirname.8");
+    &backupFile("$dirname.6", "$dirname.7");
+    &backupFile("$dirname.5", "$dirname.6");
+    &backupFile("$dirname.4", "$dirname.5");
+    &backupFile("$dirname.3", "$dirname.4");
+    &backupFile("$dirname.2", "$dirname.3");
     &backupFile("$dirname.1", "$dirname.2");
     &backupFile("$dirname", "$dirname.1");
 
