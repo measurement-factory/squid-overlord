@@ -590,7 +590,7 @@ sub waitFor
 {
     my ($description, $goalFunction) = @_;
 
-    warn("will be waiting for $description\n");
+    warn("checking whether to wait for $description\n");
     for (my $iterations = 0; !&{$goalFunction}; ++$iterations) {
         warn("waiting for $description\n") if $iterations % 60 == 0;
         sleep(1);
