@@ -214,7 +214,7 @@ sub allValgrindKidsExited() {
     return 1;
 }
 
-sub extractCacheLogErrors
+sub extractCacheLogErrors_
 {
     my ($filenamePattern) = @_;
 
@@ -230,15 +230,19 @@ sub extractCacheLogErrors
     return `grep -E -a -m10 '^[0-9./: ]+( kid[0-9]+)?[|]$prefix (WARNING|ERROR|FATAL|assertion)' $filenamePattern 2>&1`;
 }
 
+sub extractCacheLogErrors
+{
+    return &extractCacheLogErrors_($SquidConsoleLogFilename) .
+        &extractCacheLogErrors_("$SquidLogsDirname/cache-*.log");
+}
+
 sub checkSquid
 {
     my ($requireCompleteLogs) = @_;
 
     my $report = {};
 
-    my $problems =
-        &extractCacheLogErrors($SquidConsoleLogFilename) .
-        &extractCacheLogErrors("$SquidLogsDirname/cache-*.log");
+    my $problems = extractCacheLogErrors();
     # split into individual problems, removing the trailing LF from each problem
     $report->{problems} = [ split(/\n$|\n(?!\s)/s, $problems) ];
 
@@ -517,6 +521,7 @@ sub startSquid_
 
     $cmd .= " $SquidExeFilename";
     $cmd .= " -C "; # prefer "raw" errors
+    $cmd .= " -d1 ";
     $cmd .= " -f $SquidConfigFilename";
     $cmd .= ' ' . join(' ', @extraOptions) if @extraOptions;
     $cmd .= " > $SquidConsoleLogFilename 2>&1";
@@ -571,6 +576,13 @@ sub resetDir
     my ($dirname) = @_;
 
     # Two backup levels are maintained, one for old logs, and one for -z logs.
+    &backupFile("$dirname.8", "$dirname.9");
+    &backupFile("$dirname.7", "$dirname.8");
+    &backupFile("$dirname.6", "$dirname.7");
+    &backupFile("$dirname.5", "$dirname.6");
+    &backupFile("$dirname.4", "$dirname.5");
+    &backupFile("$dirname.3", "$dirname.4");
+    &backupFile("$dirname.2", "$dirname.3");
     &backupFile("$dirname.1", "$dirname.2");
     &backupFile("$dirname", "$dirname.1");
 
@@ -603,7 +615,9 @@ sub squidIsRunning() {
     my $pid = &squidPid();
 
     if (!defined $pid) {
-        warn("assume Squid is not running because there is no (PID in a stable) PID file\n");
+        warn("assuming Squid is not running because there is no (PID in a stable) PID file\n");
+        my $problems = extractCacheLogErrors();
+        warn("Squid has logged problems:\n$problems") if length $problems;
         return undef();
     }
 
