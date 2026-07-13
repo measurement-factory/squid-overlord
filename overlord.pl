@@ -48,7 +48,7 @@ my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '12';
+my $SupportedPopVersion = '13';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -718,6 +718,11 @@ sub finishCaching
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
 }
 
+sub finishUpdating
+{
+    &waitFor("header updating finished", sub { ! &squidUpdatesHeaders() });
+}
+
 sub waitActiveRequests
 {
     my ($options) = @_;
@@ -737,6 +742,13 @@ sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+sub squidUpdatesHeaders
+{
+    my $mgrPage = &getCacheManagerResponse('jobs')->{content};
+    printf(STDERR "%s", $mgrPage);
+    return $mgrPage =~ /Rock::HeaderUpdater/;
 }
 
 sub countMatchingActiveRequests
@@ -934,6 +946,12 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
         &finishCaching();
+        &sendOkResponse($client);
+        return;
+    }
+
+    if ($header =~ m@^GET\s+\S*/finishUpdating\s@s) {
+        &finishUpdating();
         &sendOkResponse($client);
         return;
     }
