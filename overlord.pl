@@ -48,7 +48,7 @@ my $SquidCachesDirname = "$SquidPrefix/var/cache/overlord";
 my $SquidConsoleLogFilename = "$SquidLogsDirname/squid-console.log";
 my $SquidStartFilename = "$SquidLogsDirname/squid.start";
 
-my $SupportedPopVersion = '13';
+my $SupportedPopVersion = '12';
 
 # Names of all supported POP request options (updated below).
 # There is also 'config_' but that "internal" option is added by us.
@@ -710,16 +710,13 @@ sub squidPid
 }
 
 # Should wait for all caching activity to stop, but currently only tracks
-# swapout activity. TODO: openfd_objects or another cache manager action
+# swapout activity and 304 disk updates.
+# TODO: openfd_objects or another cache manager action
 # should account for (existing at the time of the first request) StoreEntry
 # objects that may _start_ caching as well as memory caching.
 sub finishCaching
 {
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
-}
-
-sub finishUpdating
-{
     &waitFor("header updating finished", sub { ! &squidUpdatesHeaders() });
 }
 
@@ -946,12 +943,6 @@ sub handleClient
 
     if ($header =~ m@^GET\s+\S*/finishCaching\s@s) {
         &finishCaching();
-        &sendOkResponse($client);
-        return;
-    }
-
-    if ($header =~ m@^GET\s+\S*/finishUpdating\s@s) {
-        &finishUpdating();
         &sendOkResponse($client);
         return;
     }
