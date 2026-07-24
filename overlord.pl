@@ -744,7 +744,6 @@ sub squidHasSwapouts
 sub squidUpdatesHeaders
 {
     my $mgrPage = &getCacheManagerResponse('jobs')->{content};
-    printf(STDERR "%s", $mgrPage);
     return $mgrPage =~ /Rock::HeaderUpdater/;
 }
 
