@@ -710,12 +710,14 @@ sub squidPid
 }
 
 # Should wait for all caching activity to stop, but currently only tracks
-# swapout activity. TODO: openfd_objects or another cache manager action
+# swapout activity and 304 disk updates.
+# TODO: openfd_objects or another cache manager action
 # should account for (existing at the time of the first request) StoreEntry
 # objects that may _start_ caching as well as memory caching.
 sub finishCaching
 {
     &waitFor("swapouts gone", sub { ! &squidHasSwapouts() });
+    &waitFor("header updating finished", sub { ! &squidUpdatesHeaders() });
 }
 
 sub waitActiveRequests
@@ -737,6 +739,12 @@ sub squidHasSwapouts
 {
     my $mgrPage = &getCacheManagerResponse('openfd_objects')->{content};
     return $mgrPage =~ /SWAPOUT_WRITING/;
+}
+
+sub squidUpdatesHeaders
+{
+    my $mgrPage = &getCacheManagerResponse('jobs')->{content};
+    return $mgrPage =~ /Rock::HeaderUpdater/;
 }
 
 sub countMatchingActiveRequests
